@@ -1,37 +1,91 @@
-const assert = require('assert');
+/* Unit tests for detect.js (pure detection rules). Run: npm run test:unit */
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
 const D = require('../detect.js');
 
-const cases = [
-  ['BLS: no slots FR', { text: 'Calendrier\nAucun rendez-vous disponible pour le moment. Veuillez réessayer plus tard.', enabledDays: 0, totalDays: 30 }, 'none'],
-  ['BLS: no slots EN', { text: 'Currently no slots are available for the selected category', enabledDays: 0, totalDays: 0 }, 'none'],
-  ['VFS: earliest date', { text: 'Earliest available appointment date: 12/11/2026. Select a time slot', enabledDays: 0, totalDays: 0 }, 'available'],
-  ['VFS: no dates', { text: 'No appointment slots are currently available for the selected category. Please try again later.', enabledDays: 0, totalDays: 31 }, 'none'],
-  ['Calendar with enabled days', { text: 'Novembre 2026\n1 2 3 4 5 6 7 8 9 10', enabledDays: 3, totalDays: 30 }, 'available'],
-  ['Calendar all disabled', { text: 'Novembre 2026\n1 2 3 4 5 6 7 8 9 10', enabledDays: 0, totalDays: 30 }, 'unknown'],
-  ['Slot select populated', { text: 'Choisir un créneau', optionCount: 4 }, 'available'],
-  ['Cloudflare challenge', { text: '', pageText: 'Just a moment... Checking your browser before accessing blsspainmorocco.com', enabledDays: 0 }, 'captcha'],
-  ['Captcha widget', { text: 'Enter the captcha', pageText: 'Enter the text shown in the captcha image', enabledDays: 0 }, 'captcha'],
-  ['Login page', { text: '', pageText: 'Sign in\nEmail\nPassword\nForgot password?', enabledDays: 0, totalDays: 0 }, 'login'],
-  ['Login words but calendar present', { text: 'Aucun créneau disponible', pageText: 'Log out\nAucun créneau disponible', enabledDays: 0, totalDays: 30 }, 'none'],
-  ['Spanish no cita', { text: 'No hay citas disponibles', enabledDays: 0 }, 'none'],
-  ['Arabic available', { text: 'مواعيد متاحة: 2026-12-03', enabledDays: 0 }, 'available'],
-  ['Mixed: available wins over generic not available', { text: 'Slots available. Some dates not available.', enabledDays: 2 }, 'available'],
-];
+const snap = (o) => Object.assign({ text: '', pageText: '', enabledDays: 0, totalDays: 0, optionCount: 0 }, o);
 
-let fail = 0;
-for (const [name, snap, want] of cases) {
-  const got = D.classify(snap);
-  const ok = got.state === want;
-  if (!ok) fail++;
-  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name} → ${got.state}${ok ? '' : ` (wanted ${want})`} ${got.dates.length ? got.dates.join(',') : ''}`);
-}
+test('no-slot phrases in FR / EN / ES / AR give "none"', () => {
+  for (const text of [
+    'Aucun rendez-vous disponible pour le moment',
+    'No appointment slots are currently available',
+    'No hay citas disponibles',
+    'لا توجد مواعيد متاحة حاليا',
+    'Pas de créneau. Veuillez réessayer.',
+  ]) {
+    assert.equal(D.classify(snap({ text, totalDays: 30 })).state, 'none', text);
+  }
+});
 
-assert.deepStrictEqual(D.extractDates('12/11/2026 and 2026-12-03 and 5 décembre 2026, 1st January 2027'), ['2026-11-12', '2026-12-03', '2026-12-05', '2027-01-01']);
-assert.strictEqual(D.extractDates('32/13/2026').length, 0);
-console.log('PASS  extractDates');
-assert.strictEqual(D.hash('a'), D.hash('a'));
-assert.notStrictEqual(D.hash('a'), D.hash('b'));
-console.log('PASS  hash');
+test('a negative phrase does not leak into a positive match', () => {
+  // "aucun rendez-vous disponible" contains "rendez-vous disponible"
+  assert.equal(D.classify(snap({ text: 'aucun rendez-vous disponible' })).state, 'none');
+  assert.equal(D.classify(snap({ text: 'Pas de disponibilités ce mois-ci' })).state, 'none');
+});
 
-if (fail) { console.error(`${fail} failing`); process.exit(1); }
-console.log('All detection tests passed');
+test('selectable calendar days mean "available", even beside a no-slot phrase', () => {
+  const r = D.classify(snap({ text: 'Sélectionnez une date. Not available days are greyed.', enabledDays: 2, totalDays: 30 }));
+  assert.equal(r.state, 'available');
+  assert.match(r.reasons[0], /2 selectable day/);
+});
+
+test('slot list options mean "available"', () => {
+  assert.equal(D.classify(snap({ text: 'Choose a slot', optionCount: 3 })).state, 'available');
+});
+
+test('positive phrases alone mean "available"', () => {
+  const r = D.classify(snap({ text: 'Earliest available slot for Tourism is : 12/11/2026' }));
+  assert.equal(r.state, 'available');
+  assert.deepEqual(r.dates, ['2026-11-12']);
+});
+
+test('empty calendar with no vocabulary is "unknown"', () => {
+  assert.equal(D.classify(snap({ text: 'Appointment Date', totalDays: 31 })).state, 'unknown');
+});
+
+test('verification text on the page gives "captcha" and wins over everything', () => {
+  for (const pageText of ['Just a moment...', 'Checking your browser before accessing', 'Please verify you are human', 'Enter the CAPTCHA']) {
+    assert.equal(D.classify(snap({ text: 'slots available', pageText, enabledDays: 4 })).state, 'captcha', pageText);
+  }
+});
+
+test('a visible captcha widget (no text) gives "captcha"', () => {
+  const r = D.classify(snap({ text: 'Appointment Date', pageText: 'Appointment Date', captchaWidget: 'iframe[src*="recaptcha"]' }));
+  assert.equal(r.state, 'captcha');
+});
+
+test('login page gives "login"', () => {
+  assert.equal(D.classify(snap({ text: 'Sign in. Email. Password. Forgot password?' })).state, 'login');
+  assert.equal(D.classify(snap({ text: 'Se connecter – mot de passe oublié' })).state, 'login');
+});
+
+test('a calendar page with a "Login" link in the header is not a login page', () => {
+  assert.equal(D.classify(snap({ text: 'Login | Appointment Date', totalDays: 31 })).state, 'unknown');
+  assert.equal(D.classify(snap({ text: 'Login | No slots available', totalDays: 31 })).state, 'none');
+});
+
+test('extractDates handles numeric and FR / EN / ES month names', () => {
+  assert.deepEqual(D.extractDates('le 3/2/2027 ou 2027-02-05'), ['2027-02-03', '2027-02-05']);
+  assert.deepEqual(D.extractDates('12 novembre 2026, 1st December 2026, 7 enero 2027'), ['2026-11-12', '2026-12-01', '2027-01-07']);
+  assert.deepEqual(D.extractDates('14 févr. 2027 et 2 août 2027'), ['2027-02-14', '2027-08-02']);
+  assert.deepEqual(D.extractDates('32/01/2026 and 10/13/2026'), []);
+});
+
+test('reload delay honours the interval, ±15 % jitter, never under 60 s', () => {
+  assert.equal(D.reloadDelaySeconds(60, 0), 60);       // jitter all the way down
+  assert.equal(D.reloadDelaySeconds(60, 0.999), 69);
+  assert.equal(D.reloadDelaySeconds(30, 0), 60);       // below the minimum
+  assert.equal(D.reloadDelaySeconds(undefined, 0.5), 90);
+  for (const iv of [60, 90, 120, 600]) {
+    for (let i = 0; i < 2000; i++) {
+      const s = D.reloadDelaySeconds(iv, Math.random());
+      assert.ok(s >= 60 && s >= Math.floor(iv * 0.85) && s <= Math.ceil(iv * 1.15), `${iv} → ${s}`);
+    }
+  }
+});
+
+test('hash is stable and changes with input', () => {
+  assert.equal(D.hash('available|2026-11-12|3|0'), D.hash('available|2026-11-12|3|0'));
+  assert.notEqual(D.hash('available|2026-11-12|3|0'), D.hash('available|2026-11-12|4|0'));
+});
