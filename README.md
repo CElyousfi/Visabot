@@ -58,7 +58,10 @@ calendar page you open, so any BLS or VFS page in Morocco works.
 
 ## Development
 ```
-npm install            # playwright, for the browser test only
-npm test               # detection rules + full browser smoke test
-npm run zip            # builds rdv-maroc.zip for installing
+npm install                        # playwright, for the browser test only
+npx playwright install chromium    # once
+npm test                           # unit tests + browser smoke test (~1.5 min, waits for a real 60 s refresh)
+npm run test:unit                  # detection rules only
+npm run test:smoke                 # extension in Chromium against fake BLS / VFS pages (HEADED=1 to watch, FAST=1 skips the 60 s wait)
+npm run zip                        # builds rdv-maroc.zip (pure Node, works on Windows) and checks every manifest file is inside
 ```
