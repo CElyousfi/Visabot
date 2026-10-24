@@ -40,8 +40,15 @@ test('positive phrases alone mean "available"', () => {
   assert.deepEqual(r.dates, ['2026-11-12']);
 });
 
-test('empty calendar with no vocabulary is "unknown"', () => {
-  assert.equal(D.classify(snap({ text: 'Appointment Date', totalDays: 31 })).state, 'unknown');
+test('page with no calendar and no vocabulary is "unknown"', () => {
+  assert.equal(D.classify(snap({ text: 'Appointment Date' })).state, 'unknown');
+  assert.equal(D.classify(snap({ text: 'Appointment Date', totalDays: 3 })).state, 'unknown');
+});
+
+test('a calendar where no day is selectable is "none"', () => {
+  const r = D.classify(snap({ text: 'Appointment Date November 2026', totalDays: 30 }));
+  assert.equal(r.state, 'none');
+  assert.match(r.reasons[0], /30 day\(s\) in calendar, none selectable/);
 });
 
 test('verification text on the page gives "captcha" and wins over everything', () => {
@@ -61,7 +68,7 @@ test('login page gives "login"', () => {
 });
 
 test('a calendar page with a "Login" link in the header is not a login page', () => {
-  assert.equal(D.classify(snap({ text: 'Login | Appointment Date', totalDays: 31 })).state, 'unknown');
+  assert.equal(D.classify(snap({ text: 'Login | Appointment Date', totalDays: 31, enabledDays: 1 })).state, 'available');
   assert.equal(D.classify(snap({ text: 'Login | No slots available', totalDays: 31 })).state, 'none');
 });
 

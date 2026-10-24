@@ -76,7 +76,7 @@
 
     const months = {
       jan: 1, janv: 1, january: 1, janvier: 1, enero: 1, ene: 1,
-      feb: 2, fév: 2, fev: 2, february: 2, février: 2, fevrier: 2, febrero: 2,
+      feb: 2, fév: 2, fev: 2, févr: 2, fevr: 2, february: 2, février: 2, fevrier: 2, febrero: 2,
       mar: 3, march: 3, mars: 3, marzo: 3,
       apr: 4, avr: 4, april: 4, avril: 4, abril: 4, abr: 4,
       may: 5, mai: 5, mayo: 5,
@@ -105,6 +105,7 @@
    *   enabledDays – number of calendar day cells that look clickable/enabled
    *   totalDays   – number of calendar day cells seen
    *   optionCount – number of non-placeholder <option>s in slot/date selects
+   *   captchaWidget – selector of a visible verification widget on the page, if any
    * @returns {{state:string, reasons:string[], dates:string[]}}
    *   state ∈ 'captcha' | 'login' | 'available' | 'none' | 'unknown'
    */
@@ -112,6 +113,7 @@
     const reasons = [];
     const page = snap.pageText || snap.text || '';
 
+    if (snap.captchaWidget) return { state: 'captcha', reasons: [`verification widget: ${snap.captchaWidget}`], dates: [] };
     const cap = containsAny(page, CAPTCHA_MARKERS);
     if (cap.length) return { state: 'captcha', reasons: cap, dates: [] };
 
@@ -141,6 +143,8 @@
     if (reasons.length) return { state: 'available', reasons, dates };
 
     if (no.length) return { state: 'none', reasons: no, dates: [] };
+    // A recognisable calendar (a week or more of day cells) with nothing selectable is "no slots".
+    if (snap.totalDays >= 7) return { state: 'none', reasons: [`${snap.totalDays} day(s) in calendar, none selectable`], dates: [] };
     return { state: 'unknown', reasons: [], dates };
   }
 
@@ -154,7 +158,17 @@
     return (h >>> 0).toString(16);
   }
 
-  const api = { classify, extractDates, hash, norm, NO_SLOT_PHRASES, SLOT_PHRASES, CAPTCHA_MARKERS, LOGIN_MARKERS };
+  const MIN_INTERVAL = 60;          // seconds — keep it human-like
+  const JITTER = 0.15;              // ±15 % so refreshes are not metronomic
+
+  /** Seconds until the next refresh. `rand` ∈ [0, 1). The jitter never goes under the minimum. */
+  function reloadDelaySeconds(interval, rand) {
+    const base = Math.max(MIN_INTERVAL, Number(interval) || 90);
+    const jitter = base * JITTER * (rand * 2 - 1);
+    return Math.max(MIN_INTERVAL, Math.round(base + jitter));
+  }
+
+  const api = { classify, extractDates, hash, norm, reloadDelaySeconds, MIN_INTERVAL, NO_SLOT_PHRASES, SLOT_PHRASES, CAPTCHA_MARKERS, LOGIN_MARKERS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RDVDetect = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
