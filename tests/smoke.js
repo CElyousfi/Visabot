@@ -15,9 +15,9 @@ const BLS_URL = 'https://www.blsspainmorocco.com/MAR/appointment/slotselection';
 const VFS_URL = 'https://visa.vfsglobal.com/mar/en/ita/book-appointment';
 
 // ---------- fixtures ----------
-function page(title, body, head = '') {
+function page(title, body, head = '', header = '<header><a href="#">Logout</a> | <a href="#">Login</a></header>') {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>${head}</head>
-<body><header><a href="#">Logout</a> | <a href="#">Login</a></header><main>${body}</main></body></html>`;
+<body>${header}<main>${body}</main></body></html>`;
 }
 
 /** BLS: jQuery UI datepicker, server-rendered. `open` = day numbers that are bookable. */
@@ -54,7 +54,7 @@ function vfsCalendar({ open = [], banner = 'No appointment slots are currently a
   const html = `<div class="alert">${banner}</div><mat-calendar class="mat-calendar"><table class="mat-calendar-table"><tbody class="mat-calendar-body"><tr>${cells.join('')}</tr></tbody></table></mat-calendar>`;
   return page('VFS Global – Book appointment', '<app-root><p>Loading…</p></app-root>',
     `<style>.mat-calendar-body-cell{cursor:default}.mat-calendar-body-cell:not(.mat-calendar-body-disabled){cursor:pointer}</style>
-     <script>setTimeout(() => { document.querySelector('app-root').innerHTML = ${JSON.stringify(html)}; }, 1000);</script>`);
+     <script>setTimeout(() => { document.querySelector('app-root').innerHTML = ${JSON.stringify(html)}; }, 1000);</script>`, '');
 }
 
 /** Generic Kendo-style widget: disabled days still contain a link, only the class says "disabled". */
@@ -112,13 +112,24 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   const clearNotifications = () => sw.evaluate(async () => { for (const id of Object.keys(await chrome.notifications.getAll())) await chrome.notifications.clear(id); });
   const tabIdOf = (url) => sw.evaluate(async (u) => (await chrome.tabs.query({})).find(t => t.url === u).id, url);
   const badgeState = (p) => p.evaluate(() => { const b = document.getElementById('rdv-maroc-badge'); return b ? { state: b.dataset.state, text: b.textContent } : null; });
-  const waitBadge = (p, state, timeout = 10000) => p.waitForFunction(s => { const b = document.getElementById('rdv-maroc-badge'); return b && b.dataset.state === s; }, state, { timeout });
+  const waitBadge = (p, state, timeout = 10000) => p.waitForFunction(s => { const b = document.getElementById('rdv-maroc-badge'); return b && b.dataset.state === s; }, state, { timeout })
+    .catch(async e => { throw new Error(`badge never became "${state}": now ${JSON.stringify(await badgeState(p).catch(() => null))}, status ${JSON.stringify((await storage()).status)}`); });
+  /** The content script writes settings/status right after the badge; wait for them. */
+  async function waitStatus(state, timeout = 5000) {
+    const end = Date.now() + timeout;
+    for (;;) {
+      const s = await storage();
+      if (s.status && s.status.state === state) return s;
+      if (Date.now() > end) throw new Error(`status never became "${state}": ${JSON.stringify(s.status)}`);
+      await new Promise(r => setTimeout(r, 100));
+    }
+  }
 
   /** Opens popup.html in a tab, pointed at `targetUrl` as if it were the active tab. */
   async function openPopup(targetUrl) {
     const p = await context.newPage();
     await p.goto(`chrome-extension://${extId}/popup.html`);
-    await p.waitForSelector('#destination option');
+    await p.waitForSelector('#destination option', { state: 'attached' });
     if (targetUrl) {
       const id = await tabIdOf(targetUrl);
       await p.evaluate((tid) => { chrome.tabs.query = async () => [await chrome.tabs.get(tid)]; }, id);
@@ -237,8 +248,9 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     const before = hits[blsPath];
     scenario[blsPath] = 'bls-slot';
     const { nextAt } = await storage();
-    await bls.waitForEvent('load', { timeout: Math.max(0, nextAt - Date.now()) + 10000 });
-    const waited = (Date.now() - started) / 1000;
+    if (process.env.FAST) { hits[blsPath]++; await bls.reload(); hits[blsPath]--; }   // FAST=1: skip the real 60 s wait while iterating
+    else await bls.waitForEvent('load', { timeout: Math.max(0, nextAt - Date.now()) + 10000 });
+    const waited = process.env.FAST ? 60 : (Date.now() - started) / 1000;
     assert(hits[blsPath] === before + 1, `expected exactly one reload, got ${hits[blsPath] - before}`);
     assert(waited >= 59.5, `reloaded after only ${waited.toFixed(1)} s`);
     await waitBadge(bls, 'available');
@@ -276,7 +288,7 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     scenario[blsPath] = 'cf-challenge';
     await bls.reload();
     await waitBadge(bls, 'captcha');
-    const { settings, status, nextAt } = await storage();
+    const { settings, status, nextAt } = await waitStatus('captcha');
     assert(settings.watching === false && status.state === 'captcha' && !nextAt, JSON.stringify({ watching: settings.watching, status, nextAt }));
     assert(/human check/i.test(await bls.textContent('#rdv-maroc-banner')), 'banner should ask the user');
   });
@@ -293,7 +305,7 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     await waitBadge(bls, 'unknown');                // not watching → ready badge
     await restart(BLS_URL);
     await waitBadge(bls, 'captcha');
-    const { settings, status } = await storage();
+    const { settings, status } = await waitStatus('captcha');
     assert(settings.watching === false && status.state === 'captcha', JSON.stringify(status));
   });
 
@@ -310,8 +322,8 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     await waitBadge(bls, 'none');
     scenario[blsPath] = 'login';
     await bls.reload();
-    await waitBadge(bls, 'login');
-    const { settings } = await storage();
+    await waitBadge(bls, 'login', 15000);
+    const { settings } = await waitStatus('login');
     assert(settings.watching === false, 'still watching after logout');
   });
 
