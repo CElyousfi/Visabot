@@ -1,0 +1,4 @@
+node_modules/
+tests/popup.png
+*.zip
+.DS_Store
