@@ -72,6 +72,18 @@ test('a calendar page with a "Login" link in the header is not a login page', ()
   assert.equal(D.classify(snap({ text: 'Login | No slots available', totalDays: 31 })).state, 'none');
 });
 
+test('cases from the original suite still hold', () => {
+  assert.equal(D.classify(snap({ text: 'Currently no slots are available for the selected category' })).state, 'none');
+  assert.equal(D.classify(snap({ text: 'Earliest available appointment date: 12/11/2026. Select a time slot' })).state, 'available');
+  // "Log out" in the page header while the calendar says no slots.
+  assert.equal(D.classify(snap({ text: 'Aucun créneau disponible', pageText: 'Log out\nAucun créneau disponible', totalDays: 30 })).state, 'none');
+  const ar = D.classify(snap({ text: 'مواعيد متاحة: 2026-12-03' }));
+  assert.equal(ar.state, 'available');
+  assert.deepEqual(ar.dates, ['2026-12-03']);
+  assert.equal(D.classify(snap({ text: 'Slots available. Some dates not available.', enabledDays: 2 })).state, 'available');
+  assert.deepEqual(D.extractDates('12/11/2026 and 2026-12-03 and 5 décembre 2026, 1st January 2027'), ['2026-11-12', '2026-12-03', '2026-12-05', '2027-01-01']);
+});
+
 test('extractDates handles numeric and FR / EN / ES month names', () => {
   assert.deepEqual(D.extractDates('le 3/2/2027 ou 2027-02-05'), ['2027-02-03', '2027-02-05']);
   assert.deepEqual(D.extractDates('12 novembre 2026, 1st December 2026, 7 enero 2027'), ['2026-11-12', '2026-12-01', '2027-01-07']);

@@ -327,6 +327,33 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert(settings.watching === false, 'still watching after logout');
   });
 
+  await check('Stop then Start again re-arms the alert for a slot already seen', async () => {
+    scenario[blsPath] = 'bls-slot';
+    await bls.reload();
+    await restart(BLS_URL);
+    await waitBadge(bls, 'available');
+    const { lastHit } = await storage();
+    const p = await openPopup(BLS_URL);
+    await p.click('#stop');
+    await bls.waitForFunction(() => /press Start/.test(document.getElementById('rdv-maroc-badge').textContent));
+    await p.click('#start');
+    await p.close();
+    await waitBadge(bls, 'available');
+    const end = Date.now() + 5000;
+    let s;
+    do { s = await storage(); if (s.lastHit.at > lastHit.at) break; await bls.waitForTimeout(100); } while (Date.now() < end);
+    assert(s.lastHit.at > lastHit.at, 'Start again did not alert for the slot already on screen');
+  });
+
+  await check('Stop clears the refresh timer and returns the badge to ready', async () => {
+    const p = await openPopup(BLS_URL);
+    await p.click('#stop');
+    await p.close();
+    await bls.waitForFunction(() => /press Start/.test(document.getElementById('rdv-maroc-badge').textContent));
+    const s = await storage();
+    assert(!s.settings.watching && !s.nextAt, JSON.stringify({ watching: s.settings.watching, nextAt: s.nextAt }));
+  });
+
   await check('Kendo-style calendar with only disabled days is not a slot', async () => {
     scenario[blsPath] = 'kendo-none';
     await bls.reload();
