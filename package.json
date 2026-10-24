@@ -1,0 +1,16 @@
+{
+  "name": "visabot-rdv-maroc",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RDV Maroc – browser extension that watches your open BLS/VFS appointment calendar (Morocco) and alerts you when a slot appears.",
+  "scripts": {
+    "test": "node tests/detect.test.js && node tests/smoke.js",
+    "test:unit": "node tests/detect.test.js",
+    "test:smoke": "node tests/smoke.js",
+    "zip": "zip -rq rdv-maroc.zip manifest.json background.js content.js content.css detect.js popup.html popup.css popup.js offscreen.html offscreen.js alert.wav icons README.md"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
+  },
+  "license": "MIT"
+}

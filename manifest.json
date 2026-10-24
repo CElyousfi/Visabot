@@ -1,0 +1,74 @@
+{
+  "manifest_version": 3,
+  "name": "RDV Maroc – Schengen Slot Watcher",
+  "version": "1.0.0",
+  "description": "Watches the appointment calendar you have open on BLS or VFS (Morocco) and alerts you the moment a slot appears. Personal use. Never logs in or books for you.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "storage",
+    "notifications",
+    "scripting",
+    "tabs",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "https://*.blsspainmorocco.com/*",
+    "https://*.blsspainmorocco.net/*",
+    "https://*.blsportugal.com/*",
+    "https://*.blsinternational.com/*",
+    "https://*.vfsglobal.com/*",
+    "https://*.vfsglobal.ma/*",
+    "https://*.vfsvisaonline.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "scripts": [
+      "background.js"
+    ]
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "RDV Maroc – Slot Watcher"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.blsspainmorocco.com/*",
+        "https://*.blsspainmorocco.net/*",
+        "https://*.blsportugal.com/*",
+        "https://*.blsinternational.com/*",
+        "https://*.vfsglobal.com/*",
+        "https://*.vfsglobal.ma/*",
+        "https://*.vfsvisaonline.com/*"
+      ],
+      "js": [
+        "detect.js",
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "alert.wav"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "rdv-maroc@local",
+      "strict_min_version": "109.0"
+    }
+  }
+}

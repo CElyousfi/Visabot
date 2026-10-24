@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RDV Maroc</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<header>
+  <div class="brand"><span class="logo">🇲🇦</span><div><h1>RDV Maroc</h1><p>Schengen slot watcher · personal use</p></div></div>
+  <div id="statusPill" class="pill" data-state="idle">Idle</div>
+</header>
+
+<section id="status" class="card">
+  <div class="row"><span class="k">Status</span><span id="statusText" class="v">Not watching</span></div>
+  <div class="row"><span class="k">Last check</span><span id="lastCheck" class="v">—</span></div>
+  <div class="row"><span class="k">Next refresh</span><span id="nextCheck" class="v">—</span></div>
+  <div id="hit" class="hit hidden"><strong>Last slot seen</strong><div id="hitText"></div></div>
+</section>
+
+<section class="card">
+  <label>Destination
+    <select id="destination"></select>
+  </label>
+  <div id="providerLine" class="muted"></div>
+  <label>Centre
+    <select id="centre"></select>
+  </label>
+  <label>Visa category
+    <select id="category"></select>
+  </label>
+  <a id="portalLink" class="link" target="_blank" rel="noopener">Open the official portal ↗</a>
+  <div id="franceNote" class="note hidden">France (TLScontact) assigns appointments randomly after you register and pay the service fee. There is no calendar to watch, so this extension cannot help for France.</div>
+</section>
+
+<section class="card">
+  <label>Refresh every <span id="intervalVal">90</span> s
+    <input id="interval" type="range" min="60" max="600" step="10" value="90">
+  </label>
+  <div class="grid">
+    <label class="chk"><input id="autoRefresh" type="checkbox" checked> Auto-refresh page</label>
+    <label class="chk"><input id="sound" type="checkbox" checked> Sound</label>
+    <label class="chk"><input id="pauseOnHit" type="checkbox"> Pause on slot</label>
+    <label class="chk">Re-alert <input id="repeatMinutes" type="number" min="1" max="120" value="10" class="num"> min</label>
+  </div>
+  <div class="row">
+    <button id="pick" class="btn ghost">Pick calendar area</button>
+    <button id="clearPick" class="btn ghost small" title="Watch the whole page again">✕</button>
+  </div>
+  <div id="selectorText" class="muted mono"></div>
+</section>
+
+<div class="actions">
+  <button id="start" class="btn primary">▶ Start watching this tab</button>
+  <button id="stop" class="btn danger hidden">■ Stop</button>
+  <button id="checkNow" class="btn ghost">Check now</button>
+  <button id="test" class="btn ghost">Test alert</button>
+</div>
+
+<p id="hint" class="hint"></p>
+<footer>
+  You log in and pass any verification yourself. This tool never stores your password, never fills a CAPTCHA, never books. It only watches the page you opened and alerts you.
+</footer>
+<script src="popup.js"></script>
+</body>
+</html>
