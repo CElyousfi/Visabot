@@ -37,3 +37,6 @@ input[type="range"] { width: 100%; margin-top: 6px; accent-color: var(--accent);
 .hit { margin-top: 8px; padding: 8px; border-radius: 8px; background: #052e16; color: #bbf7d0; font-size: 12px; }
 footer { padding: 8px 14px 12px; color: var(--muted); font-size: 11px; border-top: 1px solid var(--line); margin-top: 6px; }
 .hidden { display: none !important; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+option.unsupported, select.unsupported { color: var(--muted); }
+option:not(.unsupported) { color: var(--text); }

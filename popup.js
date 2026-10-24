@@ -21,7 +21,7 @@ const DESTINATIONS = [
   { id: 'other', name: 'Other Schengen country', provider: 'Check the embassy site', portal: '',
     centres: ['Casablanca', 'Rabat', 'Tanger', 'Marrakech', 'Fès', 'Agadir', 'Oujda', 'Nador', 'Tétouan', 'Other'] },
   { id: 'france', name: 'France (not supported)', provider: 'TLScontact – random allocation', portal: 'https://visas-fr.tlscontact.com/',
-    centres: [] },
+    centres: [], unsupported: true },
 ];
 const CATEGORIES = [
   'Tourism · Tourisme', 'Family / friends visit · Visite familiale', 'Business · Affaires', 'Study · Études',
@@ -38,6 +38,7 @@ function fill(sel, items, value) {
     const o = document.createElement('option');
     o.value = typeof it === 'string' ? it : it.id;
     o.textContent = typeof it === 'string' ? it : it.name;
+    if (it.unsupported) o.className = 'unsupported';
     sel.appendChild(o);
   }
   if (value && [...sel.options].some(o => o.value === value)) sel.value = value;
@@ -52,6 +53,7 @@ function renderDestination(settings) {
   $('portalLink').href = d.portal || '#';
   $('portalLink').classList.toggle('hidden', !d.portal);
   $('franceNote').classList.toggle('hidden', d.id !== 'france');
+  $('destination').classList.toggle('unsupported', !!d.unsupported);
   $('start').disabled = d.id === 'france';
 }
 
@@ -68,6 +70,19 @@ function isPortalUrl(url) {
 
 async function sendToTab(tabId, msg) {
   try { return await chrome.tabs.sendMessage(tabId, msg); } catch (e) { return null; }
+}
+
+/** Tabs opened before the extension was installed have no content script yet: attach it. */
+async function ensureContent(tabId) {
+  if (await sendToTab(tabId, { type: 'ping' })) return true;
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['detect.js', 'content.js'] });
+    await chrome.scripting.insertCSS({ target: { tabId }, files: ['content.css'] });
+    return true;
+  } catch (e) {
+    $('hint').textContent = 'Could not attach to this tab. Reload the page and try again.';
+    return false;
+  }
 }
 
 function collectSettings(prev) {
@@ -121,6 +136,7 @@ async function init() {
   $('pick').onclick = async () => {
     const t = await activeTab();
     if (!isPortalUrl(t.url)) { $('hint').textContent = 'Open the portal calendar in this tab first.'; return; }
+    if (!(await ensureContent(t.id))) return;
     await sendToTab(t.id, { type: 'pickArea' });
     window.close();
   };
@@ -133,10 +149,8 @@ async function init() {
     const s = collectSettings(prev);
     s.watching = true; s.watchTabId = t.id;
     await save({ settings: s, status: { state: 'unknown', at: Date.now() } });
-    const r = await sendToTab(t.id, { type: 'settingsChanged' });
-    if (!r) { // content script not injected yet (extension just installed) → inject now
-      try { await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ['detect.js', 'content.js'] }); await chrome.scripting.insertCSS({ target: { tabId: t.id }, files: ['content.css'] }); } catch (e) { $('hint').textContent = 'Could not attach to this tab. Reload the page and try again.'; }
-    }
+    if (!(await ensureContent(t.id))) return;
+    await sendToTab(t.id, { type: 'settingsChanged' });
     $('hint').textContent = 'Watching. Keep this tab open; you can switch to other tabs or windows.';
     await renderStatus();
   };
@@ -147,9 +161,13 @@ async function init() {
     if (tabId != null) await sendToTab(tabId, { type: 'settingsChanged' });
     await renderStatus();
   };
-  $('checkNow').onclick = async () => { const t = await activeTab(); await sendToTab(t.id, { type: 'checkNow' }); setTimeout(renderStatus, 500); };
+  $('checkNow').onclick = async () => {
+    const t = await activeTab();
+    if (isPortalUrl(t.url) && await ensureContent(t.id)) await sendToTab(t.id, { type: 'checkNow' });
+    setTimeout(renderStatus, 500);
+  };
   $('test').onclick = async () => {
-    const r = await chrome.runtime.sendMessage({ type: 'slotFound', title: 'RDV Maroc: test alert', body: 'This is what a real slot alert looks like.', tabId: null, sound: $('sound').checked });
+    const r = await chrome.runtime.sendMessage({ type: 'slotFound', test: true, title: 'RDV Maroc: test alert', body: 'This is what a real slot alert looks like.', tabId: null, sound: $('sound').checked });
     if ($('sound').checked && !(r && r.soundPlayed)) { try { const a = new Audio(chrome.runtime.getURL('alert.wav')); a.play().catch(() => {}); } catch (e) {} }
     $('hint').textContent = 'Test alert sent (notification' + ($('sound').checked ? ' + sound' : '') + ').';
   };
