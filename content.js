@@ -8,8 +8,6 @@
   window.__rdvMarocLoaded = true;
 
   const D = window.RDVDetect;
-  const MIN_INTERVAL = 60;          // seconds — keep it human-like
-  const JITTER = 0.15;              // ±15 % so refreshes are not metronomic
   let settings = null;
   let myTabId = null;
   let timer = null;
@@ -19,6 +17,9 @@
   let picking = false;
   let lastFingerprint = null;
   let lastAlertAt = 0;
+  let loginSince = 0;
+  let loginTimer = null;
+  const LOGIN_CONFIRM_MS = 4000;
 
   // ---------- helpers ----------
   const $ = s => document.querySelector(s);
@@ -76,11 +77,13 @@
     '[class*="calendar"] td', '[class*="Calendar"] td', '[class*="datepicker"] td',
     '[role="gridcell"]', 'td[data-date]', 'button[data-date]', '[data-day]',
   ];
-  const DISABLED_TOKENS = new Set(['disabled', 'unavailable', 'past', 'off', 'inactive', 'muted', 'blocked', 'full', 'fully', 'booked', 'not-available', 'notavailable', 'no-slot', 'noslot', 'holiday', 'weekend', 'ui-state-disabled', 'mat-calendar-body-disabled', 'outside', 'closed', 'old', 'new', 'other-month', 'ui-datepicker-unselectable', 'ui-datepicker-other-month']);
+  const DISABLED_TOKENS = new Set(['disabled', 'unavailable', 'past', 'off', 'inactive', 'muted', 'blocked', 'full', 'fully', 'booked', 'not-available', 'notavailable', 'no-slot', 'noslot', 'holiday', 'weekend', 'ui-state-disabled', 'mat-calendar-body-disabled', 'outside', 'closed', 'old', 'new', 'other-month', 'ui-datepicker-unselectable', 'ui-datepicker-other-month', 'prevmonthday', 'nextmonthday']);
+  // Widget-prefixed variants: k-state-disabled (Kendo), flatpickr-disabled, react-datepicker__day--disabled, is-disabled…
+  const DISABLED_PATTERN = /(^|[-_])(disabled|unavailable|unselectable|other-month|outside-month)$/;
   const ENABLED_TOKENS = new Set(['available', 'open', 'free', 'enabled', 'ui-state-default', 'mat-calendar-body-active', 'selectable', 'has-slot', 'hasslot', 'slot', 'slots', 'active-day', 'bookable']);
   const tokens = cls => (cls || '').toLowerCase().split(/\s+/).filter(Boolean);
   const hasToken = (cls, set) => tokens(cls).some(t => set.has(t));
-  const DISABLED_CLASS = { test: cls => hasToken(cls, DISABLED_TOKENS) };
+  const DISABLED_CLASS = { test: cls => hasToken(cls, DISABLED_TOKENS) || tokens(cls).some(t => DISABLED_PATTERN.test(t)) };
   const ENABLED_CLASS = { test: cls => hasToken(cls, ENABLED_TOKENS) };
 
   function collectDayCells(area) {
@@ -124,6 +127,24 @@
     return count;
   }
 
+  // Verification widgets that show no text of their own. Only detected so we can stop and hand
+  // over to the user; never touched. The invisible reCAPTCHA v3 badge is not a challenge.
+  const CAPTCHA_WIDGETS = [
+    'iframe[src*="recaptcha/api2/anchor"]', 'iframe[src*="recaptcha/api2/bframe"]', 'iframe[src*="recaptcha/enterprise/anchor"]',
+    'iframe[src*="hcaptcha.com"]', 'iframe[src*="challenges.cloudflare.com"]',
+    '.g-recaptcha', '.h-captcha', '.cf-turnstile', '#challenge-form', '#cf-challenge-running',
+  ];
+  function findCaptchaWidget() {
+    for (const sel of CAPTCHA_WIDGETS) {
+      for (const el of document.querySelectorAll(sel)) {
+        if (el.closest('.grecaptcha-badge')) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width > 20 && r.height > 20 && getComputedStyle(el).visibility !== 'hidden') return sel;
+      }
+    }
+    return null;
+  }
+
   function snapshot() {
     const area = watchedArea();
     const days = collectDayCells(area);
@@ -133,6 +154,7 @@
       enabledDays: days.enabled,
       totalDays: days.total,
       optionCount: collectSlotOptions(area),
+      captchaWidget: findCaptchaWidget(),
     };
   }
 
@@ -189,6 +211,7 @@
     const res = D.classify(snap);
     const fp = D.hash(`${res.state}|${res.dates.join(',')}|${snap.enabledDays}|${snap.optionCount}`);
     const label = { captcha: 'Needs you', login: 'Logged out', available: 'SLOT!', none: 'No slots', unknown: 'Watching' }[res.state];
+    if (res.state !== 'login') { loginSince = 0; clearTimeout(loginTimer); }
 
     if (res.state === 'captcha') {
       stopTimer();
@@ -201,6 +224,16 @@
     }
 
     if (res.state === 'login') {
+      // An SPA shows its bare shell for a moment after a refresh; only stop if it still looks
+      // like a login page a few seconds later.
+      if (!loginSince) loginSince = Date.now();
+      if (Date.now() - loginSince < LOGIN_CONFIRM_MS) {
+        setBadge('unknown', 'Watching', 'checking…');
+        clearTimeout(loginTimer);
+        loginTimer = setTimeout(() => evaluate('login-confirm'), LOGIN_CONFIRM_MS - (Date.now() - loginSince) + 50);
+        return;
+      }
+      loginSince = 0;
       stopTimer();
       setBadge('login', 'Logged out', 'Log in again, open the calendar, press Start');
       banner('RDV Maroc – session ended', 'The portal sent you back to the login page. Log in again (I never store your password), open the calendar, then press Start.');
@@ -229,7 +262,9 @@
       // Keep refreshing so the badge stays accurate (settings.pauseOnHit stops the refresh instead).
       if (settings.pauseOnHit) { stopTimer(); await publishStatus({ state: res.state, reasons: res.reasons, dates: res.dates, paused: true }); return; }
     } else {
-      if (lastFingerprint !== fp) { lastFingerprint = fp; await saveAlertState(); }
+      // Only a page that says "no slots" clears the last alert. 'unknown' is usually an SPA calendar
+      // that has not rendered yet after a refresh; forgetting the slot then would re-alert it.
+      if (res.state === 'none' && lastFingerprint) { lastFingerprint = null; await saveAlertState(); }
       setBadge(res.state, label, trigger === 'reload' ? 'checked after refresh' : 'checked');
     }
 
@@ -256,9 +291,7 @@
   function scheduleReload() {
     stopTimer();
     if (!settings.autoRefresh) return;
-    const base = Math.max(MIN_INTERVAL, Number(settings.interval) || 90);
-    const jitter = base * JITTER * (Math.random() * 2 - 1);
-    const secs = Math.round(base + jitter);
+    const secs = D.reloadDelaySeconds(settings.interval, Math.random());
     nextAt = Date.now() + secs * 1000;
     store({ nextAt });
     countdown = setInterval(() => {
@@ -289,22 +322,37 @@
   function stopObserver() { if (observer) observer.disconnect(); observer = null; }
 
   // ---------- area picker ----------
+  const CALENDAR_CONTAINER = '.ui-datepicker, mat-calendar, .mat-calendar, .k-calendar, .flatpickr-calendar, [class*="calendar" i], [class*="datepicker" i]';
+  /** Clicking a single day (the natural thing to do) should select the whole calendar around it. */
+  function pickTarget(el) {
+    if (!el || (el.id && el.id.startsWith('rdv-maroc'))) return null;
+    let n = el, cells = 0;
+    while (n && n !== document.body && cells < 7) { cells = collectDayCells(n).total; if (cells < 7) n = n.parentElement; }
+    if (!n || n === document.body) return el;              // not inside a calendar: keep what was clicked
+    while (n.parentElement && n.parentElement !== document.body && collectDayCells(n.parentElement).total > cells) {
+      n = n.parentElement; cells = collectDayCells(n).total;
+    }
+    const box = n.closest(CALENDAR_CONTAINER) || n.closest('table') || n;
+    return box === document.body || box === document.documentElement ? n : box;
+  }
+
   function startPicking() {
     if (picking) return;
     picking = true;
     document.documentElement.classList.add('rdv-picking');
     let current = null;
+    const targets = new WeakMap();
+    const resolve = t => { if (!targets.has(t)) targets.set(t, pickTarget(t)); return targets.get(t); };
     const over = e => {
       if (current) current.classList.remove('rdv-hover');
-      current = e.target;
-      if (current && current.id && current.id.startsWith('rdv-maroc')) { current = null; return; }
+      current = resolve(e.target);
       if (current) current.classList.add('rdv-hover');
     };
     const click = async e => {
       e.preventDefault(); e.stopPropagation();
-      const el = e.target;
+      const el = resolve(e.target);
       cleanup();
-      if (!el || (el.id && el.id.startsWith('rdv-maroc'))) return;
+      if (!el) return;
       const sel = cssPath(el);
       await patchSettings({ selector: sel });
       setBadge('unknown', 'Area set', (el.innerText || '').trim().slice(0, 40));
