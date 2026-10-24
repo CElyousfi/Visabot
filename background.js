@@ -11,8 +11,8 @@ async function playSoundOffscreen() {
   try {
     const has = await chrome.offscreen.hasDocument();
     if (!has) await chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: ['AUDIO_PLAYBACK'], justification: 'Play the slot alert sound' });
-    await chrome.runtime.sendMessage({ type: 'offscreenPlay' });
-    return true;
+    const r = await chrome.runtime.sendMessage({ type: 'offscreenPlay' });
+    return !!(r && r.played);                       // false → the caller plays the sound itself
   } catch (e) { return false; }
 }
 
@@ -37,7 +37,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       } catch (e) { /* notifications may be disabled at OS level */ }
       let soundPlayed = false;
       if (msg.type === 'slotFound') {
-        badge('!', '#dc2626');
+        if (!msg.test) badge('!', '#dc2626');
         if (msg.sound !== false) soundPlayed = await playSoundOffscreen();
         await chrome.storage.local.set({ notifTab: { [id]: msg.tabId } });
         // Bring the tab forward so the user can book immediately.
