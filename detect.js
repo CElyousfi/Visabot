@@ -168,7 +168,80 @@
     return Math.max(MIN_INTERVAL, Math.round(base + jitter));
   }
 
-  const api = { classify, extractDates, hash, norm, reloadDelaySeconds, MIN_INTERVAL, NO_SLOT_PHRASES, SLOT_PHRASES, CAPTCHA_MARKERS, LOGIN_MARKERS };
+  // ---------- what the user chose on the portal ----------
+  const COUNTRY_TOKENS = [
+    [/spain|espagne|espa[ñn]a|\besp\b|\bspn\b/, 'spain', 'Spain'],
+    [/portugal|\bprt\b|\bpor\b/, 'portugal', 'Portugal'],
+    [/italy|italie|italia|\bita\b/, 'italy', 'Italy'],
+    [/netherlands|pays-bas|holland|\bnld\b/, 'netherlands', 'Netherlands'],
+    [/germany|allemagne|deutschland|\bdeu\b/, 'germany', 'Germany'],
+    [/switzerland|suisse|schweiz|\bche\b/, 'switzerland', 'Switzerland'],
+    [/belgium|belgique|belgi[eë]|\bbel\b/, 'belgium', 'Belgium'],
+    [/austria|autriche|\baut\b/, 'austria', 'Austria'],
+  ];
+  const CENTRE_TOKENS = [
+    [/casablanca|casa\b/, 'Casablanca'], [/rabat/, 'Rabat'], [/tanger|tangier|tánger/, 'Tanger'],
+    [/nador/, 'Nador'], [/t[ée]touan|tetuan/, 'Tétouan'], [/agadir/, 'Agadir'], [/marrakech|marrakesh/, 'Marrakech'],
+    [/f[èe]s\b|fez\b/, 'Fès'], [/oujda/, 'Oujda'],
+  ];
+  // Order matters: "regroupement familial" must win over "famille".
+  const CATEGORY_TOKENS = [
+    [/reunif|regroup|reagrup/, 'Family reunification · Regroupement familial'],
+    [/famil|friend|\bami/, 'Family / friends visit · Visite familiale'],
+    [/touris/, 'Tourism · Tourisme'],
+    [/business|affaire|negocio/, 'Business · Affaires'],
+    [/stud|[ée]tud|estudi/, 'Study · Études'],
+    [/medic|m[ée]dic|sant[ée]|salud/, 'Medical · Médical'],
+    [/work|travail|trabajo|employ/, 'Work · Travail'],
+    [/transit/, 'Transit'],
+  ];
+  const CENTRE_FIELD = /cent(re|er)|location|city|ville|ciudad|vac\b|mission|office|bureau|jurisdiction/;
+  const CATEGORY_FIELD = /cat[ée]gor|type|service|purpose|motif|objet|visa|appointment|rdv|cita/;
+
+  /**
+   * Guess destination / centre / category from the portal page the user has open, so the popup
+   * does not ask for what the page already shows.
+   * @param {object} ctx
+   *   hostname, pathname – of the page
+   *   fields   – [{label, value}] selected value of each form field with the text around it
+   *   headings – page title + headings, used as a fallback for the centre
+   */
+  function detectContext(ctx) {
+    const host = norm(ctx.hostname), path = norm(ctx.pathname);
+    const out = { destinationId: '', destination: '', provider: '', centre: '', category: '' };
+    if (/bls(spain|portugal|international)/.test(host)) out.provider = 'BLS International';
+    else if (/vfs/.test(host)) out.provider = 'VFS Global';
+    for (const [re, id, name] of COUNTRY_TOKENS) if (re.test(host) || re.test(path)) { out.destinationId = id; out.destination = name; break; }
+
+    const fields = ctx.fields || [];
+    const pick = (fieldRe, tokens) => {
+      for (const f of fields) {
+        if (!fieldRe.test(norm(f.label))) continue;
+        for (const [re, name] of tokens) if (re.test(norm(f.value))) return name;
+      }
+      return '';
+    };
+    out.centre = pick(CENTRE_FIELD, CENTRE_TOKENS);
+    out.category = pick(CATEGORY_FIELD, CATEGORY_TOKENS);
+    if (!out.centre) {
+      const h = norm(ctx.headings);
+      for (const [re, name] of CENTRE_TOKENS) if (re.test(h)) { out.centre = name; break; }
+    }
+    if (!out.destination) {
+      for (const f of fields) {
+        if (!/countr|pays|destination|mission/.test(norm(f.label))) continue;
+        for (const [re, id, name] of COUNTRY_TOKENS) if (re.test(norm(f.value))) { out.destinationId = id; out.destination = name; break; }
+        if (out.destination) break;
+      }
+    }
+    if (!out.destination) {
+      const h = norm(ctx.headings);
+      for (const [re, id, name] of COUNTRY_TOKENS) if (re.test(h)) { out.destinationId = id; out.destination = name; break; }
+    }
+    return out;
+  }
+
+  const api = { classify, extractDates, hash, norm, reloadDelaySeconds, detectContext, MIN_INTERVAL, NO_SLOT_PHRASES, SLOT_PHRASES, CAPTCHA_MARKERS, LOGIN_MARKERS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RDVDetect = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

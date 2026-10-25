@@ -87,3 +87,17 @@ chrome.storage.onChanged.addListener((changes) => {
   }
   if (changes.settings && changes.settings.newValue && !changes.settings.newValue.watching) badge('', '#6b7280');
 });
+
+// Attach to portal tabs that were already open when the extension was installed or updated,
+// so watching can start without the user reloading the page.
+chrome.runtime.onInstalled.addListener(async () => {
+  const { host_permissions = [] } = chrome.runtime.getManifest();
+  let tabs = [];
+  try { tabs = await chrome.tabs.query({ url: host_permissions }); } catch (e) { return; }
+  for (const t of tabs) {
+    try {
+      await chrome.scripting.insertCSS({ target: { tabId: t.id }, files: ['content.css'] });
+      await chrome.scripting.executeScript({ target: { tabId: t.id }, files: ['detect.js', 'content.js'] });
+    } catch (e) { /* discarded tab or page we cannot script */ }
+  }
+});

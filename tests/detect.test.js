@@ -104,6 +104,35 @@ test('reload delay honours the interval, ±15 % jitter, never under 60 s', () =>
   }
 });
 
+test('detectContext reads destination, centre and category from a BLS page', () => {
+  const r = D.detectContext({
+    hostname: 'www.blsspainmorocco.com', pathname: '/MAR/appointment/newappointment',
+    fields: [{ label: 'CenterId Centre', value: 'Casablanca' }, { label: 'VisaTypeId Visa Type', value: 'Tourism' }],
+  });
+  assert.deepEqual(r, { destinationId: 'spain', destination: 'Spain', provider: 'BLS International', centre: 'Casablanca', category: 'Tourism · Tourisme' });
+});
+
+test('detectContext reads the VFS mission from the URL and a Material dropdown', () => {
+  const r = D.detectContext({
+    hostname: 'visa.vfsglobal.com', pathname: '/mar/fr/ita/book-appointment',
+    fields: [{ label: 'Application Centre Rabat', value: 'Rabat' }, { label: 'Catégorie', value: 'Regroupement familial' }],
+  });
+  assert.equal(r.provider, 'VFS Global');
+  assert.equal(r.destinationId, 'italy');
+  assert.equal(r.centre, 'Rabat');
+  assert.equal(r.category, 'Family reunification · Regroupement familial');
+});
+
+test('detectContext falls back to headings and leaves unknowns empty', () => {
+  const r = D.detectContext({ hostname: 'www.blsinternational.com', pathname: '/', fields: [], headings: 'BLS Portugal Visa – Tanger' });
+  assert.equal(r.destinationId, 'portugal');
+  assert.equal(r.centre, 'Tanger');
+  assert.equal(r.category, '');
+  const none = D.detectContext({ hostname: 'example.com', pathname: '/' });
+  assert.equal(none.destination, '');
+  assert.equal(none.centre, '');
+});
+
 test('hash is stable and changes with input', () => {
   assert.equal(D.hash('available|2026-11-12|3|0'), D.hash('available|2026-11-12|3|0'));
   assert.notEqual(D.hash('available|2026-11-12|3|0'), D.hash('available|2026-11-12|4|0'));

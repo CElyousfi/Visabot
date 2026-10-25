@@ -21,7 +21,7 @@ function page(title, body, head = '', header = '<header><a href="#">Logout</a> |
 }
 
 /** BLS: jQuery UI datepicker, server-rendered. `open` = day numbers that are bookable. */
-function blsCalendar(open = []) {
+function blsCalendar(open = [], { centre, category } = {}) {
   let rows = '', day = 1;
   for (let w = 0; w < 5; w++) {
     rows += '<tr>';
@@ -35,6 +35,8 @@ function blsCalendar(open = []) {
   }
   return page('BLS Spain – Appointment', `
     <h2>Book New Appointment</h2>
+    ${centre ? `<div class="form-group"><label for="CenterId">Centre</label><select id="CenterId" name="CenterId"><option value="">--Select--</option><option value="2">Rabat</option><option value="3" selected>${centre}</option></select></div>` : ''}
+    ${category ? `<div class="form-group"><label for="VisaTypeId">Visa Type</label><select id="VisaTypeId" name="VisaTypeId"><option value="">--Select--</option><option value="7" selected>${category}</option></select></div>` : ''}
     <label for="AppointmentDate">Appointment Date</label><input id="AppointmentDate" readonly>
     <div id="ui-datepicker-div" class="ui-datepicker ui-widget">
       <div class="ui-datepicker-title">November 2026</div>
@@ -51,7 +53,7 @@ function vfsCalendar({ open = [], banner = 'No appointment slots are currently a
     const on = open.includes(d);
     cells.push(`<td role="gridcell" class="mat-calendar-body-cell-container"><button type="button" class="mat-calendar-body-cell${on ? '' : ' mat-calendar-body-disabled'}" aria-disabled="${!on}"><span class="mat-calendar-body-cell-content">${d}</span></button></td>`);
   }
-  const html = `<div class="alert">${banner}</div><mat-calendar class="mat-calendar"><table class="mat-calendar-table"><tbody class="mat-calendar-body"><tr>${cells.join('')}</tr></tbody></table></mat-calendar>`;
+  const html = `<div class="mat-form-field"><label class="mat-label">Application Centre</label><div class="mat-select-value">Rabat</div></div><div class="alert">${banner}</div><mat-calendar class="mat-calendar"><table class="mat-calendar-table"><tbody class="mat-calendar-body"><tr>${cells.join('')}</tr></tbody></table></mat-calendar>`;
   return page('VFS Global – Book appointment', '<app-root><p>Loading…</p></app-root>',
     `<style>.mat-calendar-body-cell{cursor:default}.mat-calendar-body-cell:not(.mat-calendar-body-disabled){cursor:pointer}</style>
      <script>setTimeout(() => { document.querySelector('app-root').innerHTML = ${JSON.stringify(html)}; }, 1000);</script>`, '');
@@ -67,6 +69,7 @@ function kendoCalendar() {
 const FIXTURES = {
   'bls-none': () => blsCalendar([]),
   'bls-slot': () => blsCalendar([12, 19]),
+  'bls-auto': () => blsCalendar([12, 19], { centre: 'Casablanca', category: 'Tourism' }),
   'vfs-none': () => vfsCalendar(),
   'vfs-slot': () => vfsCalendar({ open: [12], banner: 'Earliest available slot for Tourism is : 12/11/2026' }),
   'kendo-none': () => kendoCalendar(),
@@ -138,6 +141,8 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   }
 
   console.log(`Extension ${extId} loaded in ${await sw.evaluate(() => navigator.userAgent.match(/Chrome\/[\d.]+/)[0])}`);
+  // The checks below press the buttons by hand; the autonomous mode has its own section at the end.
+  await sw.evaluate(() => chrome.storage.local.set({ settings: { autoStart: false, auto: false } }));
 
   // ---------- manifest ----------
   await check('chrome://extensions reports no errors or warnings for the extension', async () => {
@@ -406,6 +411,83 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert(s.lastHit.at === lastHit.at, 're-alerted after refresh');
     assert((await notifications()).length === 1, `notifications: ${await notifications()}`);
   });
+
+  // ---------- autonomous mode: nothing pressed, choices read from the page ----------
+  await sw.evaluate(() => chrome.storage.local.set({ settings: { autoStart: true, auto: true, sound: false, interval: 60 }, alertState: null, lastHit: null, status: null }));
+  await clearNotifications();
+  const BLS_AUTO_URL = 'https://www.blsspainmorocco.com/MAR/appointment/newappointment';
+  const blsAutoPath = new URL(BLS_AUTO_URL).pathname;
+  scenario[blsAutoPath] = 'bls-auto';
+  const auto = await context.newPage();
+  await auto.goto(BLS_AUTO_URL);
+
+  await check('auto: a BLS calendar with free days starts watching and alerts without any click', async () => {
+    await waitBadge(auto, 'available', 15000);
+    const s = await waitStatus('available');
+    assert(s.settings.watching && s.settings.autoStarted, JSON.stringify(s.settings));
+    assert(s.settings.watchTabId === (await tabIdOf(BLS_AUTO_URL)), 'watchTabId is not this tab');
+    assert((await notifications()).length === 1, `notifications: ${await notifications()}`);
+  });
+
+  await check('auto: destination, centre and category are read from the portal page', async () => {
+    const { settings, lastHit } = await storage();
+    assert(settings.destinationId === 'spain' && settings.centre === 'Casablanca' && settings.category === 'Tourism · Tourisme', JSON.stringify([settings.destinationId, settings.centre, settings.category]));
+    assert(lastHit.where === 'Spain · Casablanca · Tourism · Tourisme', lastHit.where);
+    const p = await openPopup(BLS_AUTO_URL);
+    await p.waitForFunction(() => /From the portal page: Spain · Casablanca · Tourism/.test(document.getElementById('autoText').textContent));
+    assert((await p.inputValue('#destination')) === 'spain' && (await p.inputValue('#centre')) === 'Casablanca', 'popup lists do not show the detected values');
+    await p.close();
+  });
+
+  await check('auto: the free days are outlined on the page, never clicked', async () => {
+    const days = await auto.$$eval('.rdv-slot-day', els => els.map(e => e.textContent.trim()));
+    assert(days.length === 2 && days.includes('12') && days.includes('19'), `highlighted: ${days}`);
+    assert(hits[blsAutoPath] === 1, 'the page navigated by itself');
+  });
+
+  await check('auto: Stop in the popup is respected on that page, even after a reload', async () => {
+    const p = await openPopup(BLS_AUTO_URL);
+    await p.click('#stop');
+    await p.close();
+    await auto.waitForFunction(() => /stopped/.test(document.getElementById('rdv-maroc-badge').textContent));
+    await auto.reload();
+    await auto.waitForSelector('#rdv-maroc-badge');
+    await auto.waitForTimeout(3000);
+    const { settings } = await storage();
+    assert(!settings.watching && /stopped/.test((await badgeState(auto)).text), JSON.stringify(await badgeState(auto)));
+    assert(!(await auto.$('.rdv-slot-day')), 'highlight left behind while stopped');
+  });
+  await auto.close();
+
+  const VFS_AUTO_URL = 'https://visa.vfsglobal.com/mar/fr/ita/appointment';
+  const vfsAutoPath = new URL(VFS_AUTO_URL).pathname;
+  scenario[vfsAutoPath] = 'vfs-none';
+  const vauto = await context.newPage();
+  await vauto.goto(VFS_AUTO_URL);
+
+  await check('auto: a VFS calendar rendered after load starts watching by itself', async () => {
+    await waitBadge(vauto, 'none', 15000);
+    const s = await waitStatus('none');
+    assert(s.settings.watching && s.settings.autoStarted, 'not watching');
+    assert(s.settings.destinationId === 'italy' && s.settings.centre === 'Rabat', JSON.stringify([s.settings.destinationId, s.settings.centre]));
+  });
+
+  await check('auto: a verification page pauses, and watching resumes by itself once the calendar is back', async () => {
+    scenario[vfsAutoPath] = 'cf-challenge';
+    await vauto.reload();
+    await waitBadge(vauto, 'captcha');
+    const paused = await waitStatus('captcha');
+    assert(paused.settings.watching === false, 'still watching on the challenge page');
+    scenario[vfsAutoPath] = 'vfs-slot';
+    await clearNotifications();
+    await vauto.reload();                       // the user solved it; the portal shows the calendar again
+    await waitBadge(vauto, 'available', 15000);
+    const s = await waitStatus('available');
+    assert(s.settings.watching && s.settings.autoStarted, 'did not resume');
+    assert((await notifications()).length === 1, `notifications: ${await notifications()}`);
+    assert((await vauto.$$('.rdv-slot-day')).length === 1, 'free day not highlighted');
+  });
+  await vauto.close();
 
   await context.close();
   fs.rmSync(userDataDir, { recursive: true, force: true });

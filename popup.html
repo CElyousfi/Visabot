@@ -31,6 +31,7 @@
   </label>
   <a id="portalLink" class="link" target="_blank" rel="noopener">Open the official portal ↗</a>
   <div id="franceNote" class="note hidden">France (TLScontact) assigns appointments randomly after you register and pay the service fee. There is no calendar to watch, so this extension cannot help for France.</div>
+  <div id="autoLine" class="auto"><span id="autoText"></span> <button id="autoBtn" class="linkbtn" type="button"></button></div>
 </section>
 
 <section class="card">
@@ -38,6 +39,7 @@
     <input id="interval" type="range" min="60" max="600" step="10" value="90">
   </label>
   <div class="grid">
+    <label class="chk" title="Watching starts as soon as a calendar shows in a portal tab"><input id="autoStart" type="checkbox" checked> Start by itself</label>
     <label class="chk"><input id="autoRefresh" type="checkbox" checked> Auto-refresh page</label>
     <label class="chk"><input id="sound" type="checkbox" checked> Sound</label>
     <label class="chk"><input id="pauseOnHit" type="checkbox"> Pause on slot</label>

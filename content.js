@@ -88,6 +88,7 @@
 
   function collectDayCells(area) {
     const seen = new Set();
+    const cells = [];
     let total = 0, enabled = 0;
     for (const sel of DAY_CELL_SELECTORS) {
       let nodes;
@@ -96,6 +97,10 @@
         if (seen.has(n)) continue;
         const txt = (n.textContent || '').trim();
         if (!/^\d{1,2}$/.test(txt)) continue;     // only numeric day cells
+        // A <td> wrapping a <button> for the same day (Angular Material) is one cell, not two.
+        let nested = false;
+        for (const s of seen) if (s.contains(n) || n.contains(s)) { nested = true; break; }
+        if (nested) continue;
         seen.add(n);
         total++;
         const cls = n.className && typeof n.className === 'string' ? n.className : '';
@@ -106,25 +111,88 @@
         const looksDisabled = disabledAttr || DISABLED_CLASS.test(cls) || DISABLED_CLASS.test(innerCls);
         const looksEnabled = !!inner || ENABLED_CLASS.test(cls) || ENABLED_CLASS.test(innerCls) ||
           getComputedStyle(n).cursor === 'pointer';
-        if (!looksDisabled && looksEnabled) enabled++;
+        if (!looksDisabled && looksEnabled) { enabled++; cells.push(n); }
       }
     }
-    return { total, enabled };
+    return { total, enabled, cells };
   }
 
+  const PLACEHOLDER_OPTION = /^(select|choose|choisir|s[ée]lection|--|-|please|veuillez|seleccion)/;
   function collectSlotOptions(area) {
     let count = 0;
+    const filled = [];
     const selects = area.querySelectorAll('select');
     for (const s of selects) {
       const key = `${s.id} ${s.name} ${s.className} ${s.getAttribute('aria-label') || ''}`.toLowerCase();
       if (!/slot|time|date|appoint|cita|cr[ée]neau|rdv|horaire|hour/.test(key)) continue;
+      let n = 0;
       for (const o of s.options) {
         const t = (o.textContent || '').trim().toLowerCase();
-        if (!o.value || /^(select|choose|choisir|s[ée]lection|--|-|please|veuillez|seleccion)/.test(t) || t === '') continue;
-        count++;
+        if (!o.value || PLACEHOLDER_OPTION.test(t) || t === '') continue;
+        n++;
       }
+      if (n) { count += n; filled.push(s); }
     }
-    return count;
+    return { count, filled };
+  }
+
+  // ---------- what the user chose on the portal ----------
+  function fieldLabel(el) {
+    const forLabel = el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null;
+    const wrap = el.closest('label, .form-group, .mat-form-field, .mat-mdc-form-field, .field, .input-group');
+    return [el.id, el.name, el.getAttribute('aria-label'), el.getAttribute('placeholder'),
+      forLabel && forLabel.textContent, wrap && wrap.textContent,
+      el.previousElementSibling && el.previousElementSibling.textContent]
+      .filter(Boolean).join(' ').replace(/\s+/g, ' ').slice(0, 300);
+  }
+  function pageContext() {
+    const fields = [];
+    for (const s of document.querySelectorAll('select')) {
+      const o = s.selectedOptions && s.selectedOptions[0];
+      const t = o ? (o.textContent || '').trim() : '';
+      if (!o || !o.value || PLACEHOLDER_OPTION.test(t.toLowerCase())) continue;
+      fields.push({ label: fieldLabel(s), value: t });
+    }
+    // Angular Material / custom dropdowns show the chosen value as text.
+    for (const v of document.querySelectorAll('.mat-select-value, .mat-mdc-select-value, [role="combobox"], .select2-selection__rendered, .k-input-value-text')) {
+      const t = (v.textContent || '').trim();
+      if (t) fields.push({ label: fieldLabel(v), value: t });
+    }
+    for (const i of document.querySelectorAll('input[type="radio"]:checked, input[readonly][value]')) {
+      const lab = i.type === 'radio' && i.id ? document.querySelector(`label[for="${CSS.escape(i.id)}"]` ) : null;
+      fields.push({ label: fieldLabel(i), value: (lab && lab.textContent) || i.value });
+    }
+    const headings = [document.title, ...[...document.querySelectorAll('h1, h2, h3, h4, .breadcrumb, [class*="selected" i]')].map(e => e.textContent)]
+      .join('\n').slice(0, 4000);
+    return D.detectContext({ hostname: location.hostname, pathname: location.pathname, fields, headings });
+  }
+
+  /** Fill the settings from the page unless the user chose to set them by hand. */
+  async function applyPageContext() {
+    const ctx = pageContext();
+    await store({ pageContext: Object.assign({ url: location.href, at: Date.now() }, ctx) });
+    if (settings.auto === false) return ctx;
+    const patch = {};
+    if (ctx.destinationId) { patch.destinationId = ctx.destinationId; patch.destination = ctx.destination; }
+    if (ctx.centre) patch.centre = ctx.centre;
+    if (ctx.category) patch.category = ctx.category;
+    if (Object.keys(patch).some(k => patch[k] !== settings[k])) await patchSettings(patch);
+    return ctx;
+  }
+
+  // ---------- highlight what to click (we never click it ourselves) ----------
+  function highlightSlots(area, on, scroll) {
+    const want = new Set();
+    if (on) {
+      for (const c of collectDayCells(area).cells) want.add(c);
+      for (const s of collectSlotOptions(area).filled) want.add(s);
+    }
+    // Only touch classes that change, otherwise our own edits retrigger the mutation observer.
+    for (const el of document.querySelectorAll('.rdv-slot-day')) if (!want.has(el)) el.classList.remove('rdv-slot-day');
+    for (const el of want) if (!el.classList.contains('rdv-slot-day')) el.classList.add('rdv-slot-day');
+    if (scroll && want.size) {
+      try { [...want][0].scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {}
+    }
   }
 
   // Verification widgets that show no text of their own. Only detected so we can stop and hand
@@ -149,11 +217,12 @@
     const area = watchedArea();
     const days = collectDayCells(area);
     return {
+      area,
       text: area.innerText || '',
       pageText: (document.body.innerText || '').slice(0, 20000),
       enabledDays: days.enabled,
       totalDays: days.total,
-      optionCount: collectSlotOptions(area),
+      optionCount: collectSlotOptions(area).count,
       captchaWidget: findCaptchaWidget(),
     };
   }
@@ -215,9 +284,10 @@
 
     if (res.state === 'captcha') {
       stopTimer();
-      setBadge('captcha', 'Needs you', 'Solve the verification, then click Start again');
-      banner('RDV Maroc – your turn', 'The page is asking for a human check. Solve it yourself; I never fill these in. Then press Start in the extension.');
-      await send({ type: 'notify', title: 'RDV Maroc: human check needed', body: 'Solve the verification on the portal, then press Start again.', urgent: false });
+      highlightSlots(document.body, false);
+      setBadge('captcha', 'Needs you', 'Solve the verification; I resume when the calendar is back');
+      banner('RDV Maroc – your turn', 'The page is asking for a human check. Solve it yourself; I never fill these in. I start watching again as soon as the calendar shows.');
+      await send({ type: 'notify', title: 'RDV Maroc: human check needed', body: 'Solve the verification on the portal. Watching resumes by itself afterwards.', urgent: false });
       await patchSettings({ watching: false });
       await publishStatus({ state: res.state, reasons: res.reasons, dates: [] });
       return;
@@ -235,9 +305,10 @@
       }
       loginSince = 0;
       stopTimer();
-      setBadge('login', 'Logged out', 'Log in again, open the calendar, press Start');
-      banner('RDV Maroc – session ended', 'The portal sent you back to the login page. Log in again (I never store your password), open the calendar, then press Start.');
-      await send({ type: 'notify', title: 'RDV Maroc: session ended', body: 'Log in again, open the calendar, then press Start.', urgent: false });
+      highlightSlots(document.body, false);
+      setBadge('login', 'Logged out', 'Log in again and open the calendar; I resume by myself');
+      banner('RDV Maroc – session ended', 'The portal sent you back to the login page. Log in again (I never store your password) and open the calendar; watching resumes on its own.');
+      await send({ type: 'notify', title: 'RDV Maroc: session ended', body: 'Log in again and open the calendar. Watching resumes by itself.', urgent: false });
       await patchSettings({ watching: false });
       await publishStatus({ state: res.state, reasons: res.reasons, dates: [] });
       return;
@@ -247,13 +318,14 @@
       const changed = fp !== lastFingerprint;
       const repeatMs = (settings.repeatMinutes || 10) * 60000;
       const due = Date.now() - lastAlertAt > repeatMs;
+      highlightSlots(snap.area, true, changed || due);
       if (changed || due) {
         lastFingerprint = fp;
         lastAlertAt = Date.now();
         await saveAlertState();
         const where = describeTarget();
         const datesTxt = res.dates.length ? `Dates seen: ${res.dates.slice(0, 6).join(', ')}` : res.reasons.join(' · ');
-        banner('🎉 Slot detected – book it now', `${where}\n${datesTxt}`);
+        banner('🎉 Slot detected – book it now', `${where}\n${datesTxt}\nThe free day(s) are outlined in green: click one, choose the time, confirm.`);
         const r = await send({ type: 'slotFound', title: `RDV Maroc: slot at ${where}`, body: datesTxt, url: location.href, tabId: myTabId, sound: !!settings.sound });
         if (!r || !r.soundPlayed) playSound();
         await store({ lastHit: { at: Date.now(), where, dates: res.dates, reasons: res.reasons, url: location.href } });
@@ -265,6 +337,7 @@
       // Only a page that says "no slots" clears the last alert. 'unknown' is usually an SPA calendar
       // that has not rendered yet after a refresh; forgetting the slot then would re-alert it.
       if (res.state === 'none' && lastFingerprint) { lastFingerprint = null; await saveAlertState(); }
+      highlightSlots(document.body, false);
       setBadge(res.state, label, trigger === 'reload' ? 'checked after refresh' : 'checked');
     }
 
@@ -310,12 +383,14 @@
   }
 
   // ---------- live DOM changes (SPA calendars) ----------
+  // Always on: while watching it re-checks the calendar; while idle it waits for a calendar
+  // to appear so watching can start by itself (SPA portals render it after the page loads).
   function startObserver() {
     if (observer) return;
     let t = null;
     observer = new MutationObserver(() => {
       clearTimeout(t);
-      t = setTimeout(() => evaluate('mutation'), 1500);
+      t = setTimeout(() => settings && settings.watching ? evaluate('mutation') : tryAutoStart(), 1500);
     });
     observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class', 'disabled', 'aria-disabled'] });
   }
@@ -356,7 +431,8 @@
       const sel = cssPath(el);
       await patchSettings({ selector: sel });
       setBadge('unknown', 'Area set', (el.innerText || '').trim().slice(0, 40));
-      banner('Area selected', 'I will watch only this part of the page. Press Start in the extension.');
+      banner('Area selected', 'I will watch only this part of the page.');
+      if (settings.watching) await evaluate('manual'); else await tryAutoStart({ quiet: true });
     };
     const key = e => { if (e.key === 'Escape') cleanup(); };
     const cleanup = () => {
@@ -379,22 +455,52 @@
     return Object.assign({
       watching: false, autoRefresh: true, interval: 90, sound: true, repeatMinutes: 10,
       pauseOnHit: false, selector: '', destination: '', centre: '', category: '', watchTabId: null,
+      auto: true, autoStart: true, manualStopUrl: '',
     }, saved);
+  }
+
+  function watchedElsewhere() {
+    return settings.watching && settings.watchTabId != null && myTabId != null && settings.watchTabId !== myTabId;
+  }
+
+  /** Start by itself when this tab shows a calendar: no button to press. */
+  async function tryAutoStart(opts = {}) {
+    settings = await readSettings();
+    if (settings.watching || picking) return false;
+    const idle = (state, text, sub) => { if (!opts.quiet) setBadge(state, text, sub); };   // quiet: keep the badge the caller set
+    if (settings.autoStart === false) { idle('unknown', 'RDV Maroc', 'ready – press Start in the extension'); return false; }
+    if (settings.manualStopUrl && settings.manualStopUrl === location.href) { idle('unknown', 'RDV Maroc', 'stopped – press Start to watch again'); return false; }
+    const snap = snapshot();
+    const res = D.classify(snap);
+    const calendar = snap.totalDays >= 7 || snap.optionCount > 0 || res.state === 'available' || res.state === 'none';
+    if (res.state === 'captcha') { idle('captcha', 'Needs you', 'solve the verification; I resume after'); return false; }
+    if (res.state === 'login') { idle('login', 'Logged out', 'log in and open the calendar; I resume after'); return false; }
+    if (!calendar) { idle('unknown', 'RDV Maroc', 'waiting for a calendar on this page'); return false; }
+    await patchSettings({ watching: true, watchTabId: myTabId, autoStarted: true, manualStopUrl: '' });
+    await store({ status: { state: 'unknown', at: Date.now(), tabId: myTabId, url: location.href } });
+    await applyPageContext();
+    setBadge('unknown', 'Watching', 'started automatically');
+    await loadAlertState();
+    await evaluate('auto');
+    return true;
   }
 
   async function start() {
     settings = await readSettings();
-    if (settings.watching && settings.watchTabId && myTabId && settings.watchTabId !== myTabId) {
-      // Another tab is the one being watched.
+    if (watchedElsewhere()) {
       setBadge('unknown', 'RDV Maroc', 'watching another tab');
-      return;
-    }
-    if (!settings.watching) {
-      setBadge('unknown', 'RDV Maroc', 'ready – press Start in the extension');
       stopObserver(); stopTimer();
       return;
     }
+    if (!settings.watching) {
+      stopTimer();
+      highlightSlots(document.body, false);
+      startObserver();
+      await tryAutoStart();
+      return;
+    }
     setBadge('unknown', 'Watching', 'checking…');
+    await applyPageContext();
     await loadAlertState();
     startObserver();
     await evaluate('reload');
@@ -406,6 +512,7 @@
       else if (msg.type === 'settingsChanged') { lastFingerprint = null; lastAlertAt = 0; await saveAlertState(); await start(); reply({ ok: true }); }
       else if (msg.type === 'checkNow') { settings = await readSettings(); await evaluate('manual'); reply({ ok: true }); }
       else if (msg.type === 'ping') reply({ ok: true, url: location.href, tabId: myTabId });
+      else if (msg.type === 'pageContext') { settings = await readSettings(); reply({ ok: true, context: await applyPageContext() }); }
       else reply({ ok: false });
     })();
     return true;
