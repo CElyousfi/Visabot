@@ -52,10 +52,12 @@ const VISA_FIELDS = [
 ];
 
 function fullName(a) {
+  if (a._locked) return 'Locked';
   const ap = a.applicant || {};
   return [ap.givenName, ap.surname].filter(Boolean).join(' ') || 'Unnamed applicant';
 }
 function initials(a) {
+  if (a._locked) return '🔒';
   const ap = a.applicant || {};
   const s = `${(ap.givenName || '')[0] || ''}${(ap.surname || '')[0] || ''}`;
   return (s || '?').toUpperCase();
@@ -108,14 +110,137 @@ function chip(state) {
   return h('span', { class: `chip ${state}` }, STATE_ICON[state] ? icon(STATE_ICON[state]) : h('span', { class: 'd' }), STATE_LABEL[state]);
 }
 
+// ---------- optional passphrase protection ----------
+// When on, each application's private part (applicant details, notes, portal login) is stored as
+// one AES-GCM box, and documents are stored encrypted. The key exists only in this page's memory.
+let cryptoKey = null;
+const PRIVATE = ['applicant', 'notes', 'portalAccount'];
+const encryptionOn = () => !!(settings.encryption && settings.encryption.salt);
+const isLocked = () => encryptionOn() && !cryptoKey;
+
+/** What goes to storage for an application. */
+async function sealApp(a) {
+  const copy = Object.assign({}, a);
+  delete copy._locked;
+  if (encryptionOn() && cryptoKey) {
+    const priv = {};
+    for (const k of PRIVATE) if (a[k] !== undefined) priv[k] = a[k];
+    copy.privateEnc = await RDVCrypto.encryptJSON(cryptoKey, priv);
+    copy.applicant = {}; delete copy.notes; delete copy.portalAccount; copy.applicantLocked = true;
+  } else if (encryptionOn() && a.privateEnc) {
+    copy.applicant = {}; delete copy.notes; delete copy.portalAccount; copy.applicantLocked = true;   // locked: the sealed box is kept as it is
+  } else {
+    delete copy.privateEnc; delete copy.applicantLocked;
+  }
+  return copy;
+}
+/** What was loaded from storage, opened for this page when the key is available. */
+async function openApp(a) {
+  if (!a.privateEnc) { a._locked = false; return a; }
+  if (!cryptoKey) { a._locked = true; a.applicant = {}; return a; }
+  try { Object.assign(a, await RDVCrypto.decryptJSON(cryptoKey, a.privateEnc)); a._locked = false; }
+  catch (e) { a._locked = true; a.applicant = {}; }
+  return a;
+}
+function askPassphrase({ title, note, confirm = false, okLabel = 'Unlock' }) {
+  return new Promise(res => {
+    const d = $('passDlg');
+    $('passTitle').textContent = title; $('passNote').textContent = note || '';
+    $('pass1').value = ''; $('pass2').value = ''; $('passErr').textContent = '';
+    $('pass2wrap').classList.toggle('hidden', !confirm);
+    $('pass2').required = confirm;
+    $('passOk').textContent = okLabel;
+    const done = v => { d.onclose = null; if (d.open) d.close(); res(v); };
+    $('passForm').onsubmit = e => {
+      e.preventDefault();
+      const v = $('pass1').value;
+      if (v.length < 6) { $('passErr').textContent = 'At least 6 characters.'; return; }
+      if (confirm && v !== $('pass2').value) { $('passErr').textContent = 'The two entries differ.'; return; }
+      done(v);
+    };
+    $('passCancel').onclick = () => done(null);
+    d.onclose = () => res(null);
+    d.showModal();
+    $('pass1').focus();
+  });
+}
+async function verifyPassphrase(pass) {
+  const e = settings.encryption;
+  const key = await RDVCrypto.deriveKey(pass, e.salt, e.iterations || RDVCrypto.ITER);
+  try { const c = await RDVCrypto.decryptJSON(key, e.check); return c && c.ok ? key : null; } catch (err) { return null; }
+}
+async function unlock() {
+  const pass = await askPassphrase({ title: 'Unlock', note: 'Enter your passphrase to see applicant details and documents.' });
+  if (pass == null) return false;
+  const key = await verifyPassphrase(pass);
+  if (!key) { toast('Wrong passphrase'); return false; }
+  cryptoKey = key;
+  await refresh(); render(); if (selectedId) renderDrawer();
+  $('lockScreen').classList.add('hidden');
+  toast('Unlocked for this tab');
+  return true;
+}
+function lockNow() {
+  cryptoKey = null;
+  refresh().then(() => { render(); if (selectedId) renderDrawer(); });
+  toast('Locked');
+}
+async function enableEncryption() {
+  const pass = await askPassphrase({
+    title: 'Protect with a passphrase', confirm: true, okLabel: 'Encrypt',
+    note: 'Applicant details, notes, the portal login email and your documents will be encrypted (AES-GCM, key from your passphrase). You will be asked for it each time you open the dashboard. There is no recovery if you forget it.',
+  });
+  if (pass == null) return;
+  const salt = RDVCrypto.newSalt();
+  const key = await RDVCrypto.deriveKey(pass, salt);
+  const check = await RDVCrypto.encryptJSON(key, { ok: true });
+  cryptoKey = key;
+  settings = Object.assign((await load('settings')).settings || {}, { encryption: { v: 1, salt, iterations: RDVCrypto.ITER, check } });
+  await save({ settings });
+  await saveApps();
+  await reencryptDocs(true);
+  render(); if (selectedId) renderDrawer();
+  toast('Encrypted. Keep the passphrase safe.');
+}
+async function disableEncryption() {
+  if (isLocked() && !(await unlock())) return;
+  const pass = await askPassphrase({ title: 'Remove the passphrase', okLabel: 'Remove', note: 'Details and documents will be stored readable again in this browser. Enter the passphrase to confirm.' });
+  if (pass == null) return;
+  if (!(await verifyPassphrase(pass))) { toast('Wrong passphrase'); return; }
+  await reencryptDocs(false);
+  settings = (await load('settings')).settings || {};
+  delete settings.encryption;
+  await save({ settings });
+  cryptoKey = null;
+  await saveApps();                          // in memory the applications are open: stored plain again
+  render(); if (selectedId) renderDrawer();
+  toast('Passphrase removed');
+}
+function openSecurity() {
+  const on = encryptionOn(), locked = isLocked();
+  $('secStatus').textContent = !on ? 'Off. Applicant details and documents are stored readable in this browser profile.'
+    : locked ? 'On and locked for this tab.' : 'On. Unlocked for this tab until you lock it or close the tab.';
+  $('secEnable').classList.toggle('hidden', on);
+  $('secUnlock').classList.toggle('hidden', !locked);
+  $('secLock').classList.toggle('hidden', !on || locked);
+  $('secDisable').classList.toggle('hidden', !on);
+  $('secDlg').showModal();
+}
+
 // ---------- persistence ----------
 let writing = 0;
-async function saveApps() { writing++; await save({ applications: apps }); setTimeout(() => writing--, 50); }
+async function saveApps() {
+  const stored = await Promise.all(apps.map(sealApp));
+  writing++;
+  await save({ applications: stored });
+  setTimeout(() => writing--, 50);
+}
 function appById(id) { return apps.find(a => a.id === id); }
 /** Storage refreshes replace the objects; handlers must write to the current one. */
 const live = a => appById(a.id) || a;
 
 async function newApplication() {
+  if (isLocked()) { toast('Unlock first'); return; }
   const n = apps.reduce((m, a) => Math.max(m, a.num || 0), 1000) + 1;
   const a = {
     id: `app-${Date.now()}`, num: n, createdAt: Date.now(), status: 'idle',
@@ -342,7 +467,10 @@ function kvRows(a, fields, isVisa) {
   return fields.flatMap(([key, label, ic, spec]) => {
     const raw = src[key] || '';
     const shown = displayValue(key, raw);
-    const value = editing
+    const lockedField = a._locked && (!isVisa || PRIVATE.includes(key));
+    const value = lockedField
+      ? h('div', { class: 'v' }, h('span', { class: 'empty-val' }, '🔒 locked'))
+      : editing
       ? h('div', { class: 'v' }, fieldInput(a, key, spec, isVisa))
       : h('div', { class: 'v' },
         key === 'destinationId' && raw ? flag(raw) : null,
@@ -353,7 +481,11 @@ function kvRows(a, fields, isVisa) {
 }
 function renderDetail(a) {
   $('editBtn').querySelector('span').textContent = editing ? 'Done' : 'Edit';
-  $('kvApplicant').replaceChildren(...kvRows(a, APPLICANT_FIELDS, false));
+  $('editBtn').classList.toggle('hidden', !!a._locked);
+  if (a._locked) editing = false;
+  $('kvApplicant').replaceChildren(
+    a._locked ? h('div', { class: 'locked-note', style: 'grid-column: 1 / -1; margin-bottom: 6px' }, icon('lock'), 'Encrypted with your passphrase. ', h('button', { class: 'btn sm primary', onclick: unlock }, icon('unlock'), 'Unlock')) : null,
+    ...kvRows(a, APPLICANT_FIELDS, false));
   $('kvVisa').replaceChildren(...kvRows(a, VISA_FIELDS, true));
 }
 
@@ -502,21 +634,59 @@ async function idb(mode, fn) {
   });
 }
 const docsFor = appId => idb('readonly', s => s.index('appId').getAll(appId));
+const allDocs = () => idb('readonly', s => s.getAll());
 const putDoc = doc => idb('readwrite', s => s.put(doc));
 const delDoc = id => idb('readwrite', s => s.delete(id));
+
+/** A document record for the store: encrypted content and name when protection is on. */
+async function sealDoc(meta, blob) {
+  if (encryptionOn() && cryptoKey) {
+    const enc = await RDVCrypto.encryptBytes(cryptoKey, await blob.arrayBuffer());
+    const nameEnc = await RDVCrypto.encryptJSON(cryptoKey, { name: meta.name });
+    return Object.assign({}, meta, { name: 'Encrypted document', encrypted: true, enc, nameEnc });
+  }
+  return Object.assign({}, meta, { blob });
+}
+async function docBlob(doc) {
+  if (!doc.encrypted) return doc.blob;
+  if (!cryptoKey) return null;
+  return new Blob([await RDVCrypto.decryptBytes(cryptoKey, doc.enc)], { type: doc.type });
+}
+async function docName(doc) {
+  if (!doc.encrypted) return doc.name;
+  if (!cryptoKey) return 'Encrypted document';
+  try { return (await RDVCrypto.decryptJSON(cryptoKey, doc.nameEnc)).name; } catch (e) { return 'Encrypted document'; }
+}
+/** Turning protection on or off re-stores every document accordingly. */
+async function reencryptDocs(on) {
+  for (const doc of await allDocs()) {
+    if (on && !doc.encrypted) {
+      const { blob, ...meta } = doc;
+      await putDoc(await sealDoc(meta, blob));
+    } else if (!on && doc.encrypted) {
+      const blob = await docBlob(doc), name = await docName(doc);
+      const { enc, nameEnc, encrypted, ...meta } = doc;
+      await putDoc(Object.assign(meta, { blob, name }));
+    }
+  }
+}
 
 function size(n) { return n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`; }
 
 async function renderDocs(a) {
   const docs = (await docsFor(a.id)).sort((x, y) => y.at - x.at);
+  const names = await Promise.all(docs.map(docName));
   if (selectedId !== a.id || tab !== 'docs') return;
-  $('docList').replaceChildren(...docs.map(doc => {
+  const locked = isLocked();
+  $('drop').classList.toggle('hidden', locked);
+  $('docList').replaceChildren(...docs.map((doc, i) => {
     const isImg = doc.type.startsWith('image/');
+    const sealed = doc.encrypted && !cryptoKey;
     return h('div', { class: `doc ${viewingDoc === doc.id ? 'on' : ''}` },
-      h('div', { class: `doc-ic ${isImg ? 'img' : ''}` }, icon('file')),
-      h('div', { class: 'doc-meta' }, h('div', { class: 'doc-name' }, doc.name), h('div', { class: 'doc-sub' }, `${isImg ? 'Image' : 'PDF'} · ${size(doc.size)} · ${fmtWhen(doc.at)}`)),
-      h('button', { class: 'btn sm', onclick: () => preview(doc) }, icon('eye'), 'Preview'),
-      h('button', { class: 'btn sm', onclick: () => download(doc.name, doc.blob) }, icon('download'), 'Download'),
+      h('div', { class: `doc-ic ${isImg ? 'img' : ''}` }, icon(sealed ? 'lock' : 'file')),
+      h('div', { class: 'doc-meta' }, h('div', { class: 'doc-name' }, names[i]), h('div', { class: 'doc-sub' }, `${isImg ? 'Image' : 'PDF'} · ${size(doc.size)} · ${fmtWhen(doc.at)}${doc.encrypted ? ' · encrypted' : ''}`)),
+      h('button', { class: 'btn sm', disabled: sealed, onclick: () => preview(doc) }, icon('eye'), 'Preview'),
+      h('button', { class: 'btn sm', disabled: sealed, onclick: async () => download(await docName(doc), await docBlob(doc)) }, icon('download'), 'Download'),
       h('button', {
         class: 'icon-btn plain', title: 'Delete', onclick: async () => {
           if (!confirm(`Delete ${doc.name}?`)) return;
@@ -530,13 +700,16 @@ async function renderDocs(a) {
 }
 
 let previewUrl = null;
-function preview(doc) {
+async function preview(doc) {
+  const blob = await docBlob(doc);
+  if (!blob) { toast('Unlock first'); return; }
+  const name = await docName(doc);
   viewingDoc = doc.id;
   zoom = 1;
   if (previewUrl) URL.revokeObjectURL(previewUrl);
-  previewUrl = URL.createObjectURL(doc.blob);
+  previewUrl = URL.createObjectURL(blob);
   const isImg = doc.type.startsWith('image/');
-  $('stage').replaceChildren(isImg ? h('img', { src: previewUrl, alt: doc.name }) : h('iframe', { src: previewUrl, title: doc.name }));
+  $('stage').replaceChildren(isImg ? h('img', { src: previewUrl, alt: name }) : h('iframe', { src: previewUrl, title: name }));
   $('stage').style.display = isImg ? 'grid' : 'block';
   $('viewer').querySelector('.zoom').classList.toggle('hidden', !isImg);
   $('zVal').textContent = '100%';
@@ -558,7 +731,7 @@ async function addFiles(files) {
   for (const f of files) {
     if (!/^image\/|application\/pdf/.test(f.type)) { toast(`${f.name}: only PDF or images`); continue; }
     if (f.size > 25 * 1048576) { toast(`${f.name} is over 25 MB`); continue; }
-    await putDoc({ id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, appId: a.id, name: f.name, type: f.type, size: f.size, at: Date.now(), blob: f });
+    await putDoc(await sealDoc({ id: `doc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, appId: a.id, name: f.name, type: f.type, size: f.size, at: Date.now() }, f));
     added++;
   }
   if (added) { toast(`${added} document${added > 1 ? 's' : ''} added`); renderDocs(a); }
@@ -572,6 +745,9 @@ async function refresh() {
   status = s.status || {};
   nextAt = s.nextAt || 0;
   lastHit = s.lastHit || null;
+  for (const a of apps) await openApp(a);
+  $('railLock').classList.toggle('on', encryptionOn());
+  $('railLock').title = !encryptionOn() ? 'Passphrase protection: off' : isLocked() ? 'Passphrase protection: locked' : 'Passphrase protection: on (unlocked)';
 }
 
 async function init() {
@@ -585,8 +761,24 @@ async function init() {
   $('search').oninput = onSearch;
   $('topSearch').oninput = onSearch;
   for (const id of ['newApp', 'railNew', 'emptyNew']) $(id).onclick = newApplication;
-  $('railExport').onclick = () => download(`rdv-maroc-backup-${new Date().toISOString().slice(0, 10)}.json`,
-    new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), applications: apps, settings }, null, 2)], { type: 'application/json' }));
+  $('railExport').onclick = async () => {
+    // With protection on, the backup holds the sealed boxes, never the plaintext.
+    const applications = await Promise.all(apps.map(sealApp));
+    const e = settings.encryption;
+    const body = { exportedAt: new Date().toISOString(), encrypted: encryptionOn(),
+      encryption: encryptionOn() ? { kdf: 'PBKDF2-SHA256', iterations: e.iterations, salt: e.salt, cipher: 'AES-GCM-256' } : undefined,
+      applications, settings: Object.assign({}, settings, { encryption: undefined }) };
+    download(`rdv-maroc-backup-${new Date().toISOString().slice(0, 10)}.json`, new Blob([JSON.stringify(body, null, 2)], { type: 'application/json' }));
+  };
+  $('railLock').onclick = openSecurity;
+  $('secEnable').onclick = () => { $('secDlg').close(); enableEncryption(); };
+  $('secUnlock').onclick = () => { $('secDlg').close(); unlock(); };
+  $('secLock').onclick = () => { $('secDlg').close(); lockNow(); };
+  $('secDisable').onclick = () => { $('secDlg').close(); disableEncryption(); };
+  $('secClose').onclick = () => $('secDlg').close();
+  $('lockUnlock').onclick = unlock;
+  $('lockSkip').onclick = () => $('lockScreen').classList.add('hidden');
+  if (isLocked()) $('lockScreen').classList.remove('hidden');
   $('livePill').onclick = focusWatchedTab;
   $('liveBarGo').onclick = async () => { if (!(await focusWatchedTab())) toast('The watched tab is closed'); };
 

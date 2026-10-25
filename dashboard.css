@@ -248,3 +248,24 @@ button { font: inherit; color: inherit; }
 .livebar[data-state="available"] .btn { background: var(--green); border-color: var(--green); color: #fff; }
 .grid tbody tr.live-slot td { background: #f0fdf4; animation: row-pulse 1.4s ease-in-out infinite; }
 @keyframes row-pulse { 50% { background: #dcfce7; } }
+
+/* ---------- passphrase protection ---------- */
+.rail-btn.on { background: var(--green-soft); color: var(--green); }
+.lockscreen { position: fixed; inset: 0; z-index: 30; background: rgba(30, 33, 48, .45); backdrop-filter: blur(3px); display: grid; place-items: center; }
+.lockcard { width: min(420px, 92vw); background: var(--surface); border-radius: 18px; padding: 28px 26px; text-align: center; box-shadow: 0 20px 60px rgba(20,24,40,.3); }
+.lockcard-ic { width: 52px; height: 52px; margin: 0 auto 10px; border-radius: 16px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; }
+.lockcard-ic svg { width: 24px; height: 24px; }
+.lockcard h2 { margin: 0 0 6px; font-size: 18px; }
+.lockcard p { color: var(--muted); margin: 0 0 16px; }
+.lockcard-actions { display: flex; gap: 8px; justify-content: center; }
+.dlg { border: 0; border-radius: 16px; padding: 22px 24px; width: min(440px, 92vw); box-shadow: 0 20px 60px rgba(20,24,40,.3); color: var(--text); background: var(--surface); font: inherit; }
+.dlg::backdrop { background: rgba(30, 33, 48, .4); }
+.dlg h3 { margin: 0 0 6px; font-size: 16px; }
+.dlg label { display: block; margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+.dlg input { display: block; width: 100%; margin-top: 4px; height: 36px; border: 1px solid var(--line); border-radius: 10px; padding: 0 10px; font: inherit; background: var(--soft); color: var(--text); }
+.dlg input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.dlg-err { color: var(--red); font-size: 12px; min-height: 16px; margin-top: 6px; }
+.dlg-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+.dlg-actions.wrap { flex-wrap: wrap; justify-content: flex-start; }
+.locked-note { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 12px; background: var(--soft); border: 1px dashed var(--line); color: var(--muted); }
+.locked-note svg { color: var(--accent); }

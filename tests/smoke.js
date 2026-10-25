@@ -164,6 +164,16 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   const badgeState = (p) => p.evaluate(() => { const b = document.getElementById('rdv-maroc-badge'); return b ? { state: b.dataset.state, text: b.textContent } : null; });
   const waitBadge = (p, state, timeout = 10000) => p.waitForFunction(s => { const b = document.getElementById('rdv-maroc-badge'); return b && b.dataset.state === s; }, state, { timeout })
     .catch(async e => { throw new Error(`badge never became "${state}": now ${JSON.stringify(await badgeState(p).catch(() => null))}, status ${JSON.stringify((await storage()).status)}`); });
+  /** The refresh timer is stored a moment after the badge and status; wait for it. */
+  async function waitNextAt(timeout = 5000) {
+    const end = Date.now() + timeout;
+    for (;;) {
+      const { nextAt } = await storage();
+      if (nextAt > Date.now()) return nextAt;
+      if (Date.now() > end) throw new Error(`no refresh scheduled (nextAt ${nextAt})`);
+      await new Promise(r => setTimeout(r, 50));
+    }
+  }
   /** The content script writes settings/status right after the badge; wait for them. */
   async function waitStatus(state, timeout = 5000) {
     const end = Date.now() + timeout;
@@ -259,6 +269,35 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     do { a = (await storage()).applications.find(x => x.id === appId); if (a && a.status === 'booked') break; await conf.waitForTimeout(100); } while (Date.now() < end);
     assert(a && a.status === 'booked', `status ${a && a.status}`);
     return conf;
+  }
+
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+  async function uploadDoc(dash) {
+    await dash.click('#dTabs [data-t="docs"]');
+    await dash.setInputFiles('#fileIn', { name: 'passport-scan.png', mimeType: 'image/png', buffer: PNG });
+    await dash.waitForSelector('.doc');
+  }
+  /** Documents as stored in IndexedDB, seen from an extension page. */
+  const storedDocs = (p) => p.evaluate(() => new Promise(res => {
+    const r = indexedDB.open('rdv-maroc', 1);
+    r.onsuccess = () => { const g = r.result.transaction('docs').objectStore('docs').getAll(); g.onsuccess = () => res(g.result.map(d => ({ encrypted: !!d.encrypted, hasBlob: !!d.blob, hasEnc: !!d.enc, name: d.name }))); };
+  }));
+  async function closeDrawer(dash) { if (await dash.isVisible('#scrim')) { await dash.click('#close'); await dash.waitForSelector('#scrim.hidden', { state: 'attached' }); } }
+  async function enableProtection(dash, pass) {
+    await closeDrawer(dash);
+    await dash.click('#railLock');
+    await dash.click('#secEnable');
+    await dash.fill('#pass1', pass);
+    await dash.fill('#pass2', pass);
+    await dash.click('#passOk');
+    await dash.waitForFunction(() => document.getElementById('railLock').classList.contains('on'));
+    const end = Date.now() + 8000;
+    for (;;) {
+      const s = await storage();
+      if (s.applications.length && s.applications.every(a => a.privateEnc)) return s;
+      if (Date.now() > end) throw new Error('applications were not sealed');
+      await dash.waitForTimeout(100);
+    }
   }
 
   console.log(`Extension ${extId} loaded in ${await sw.evaluate(() => navigator.userAgent.match(/Chrome\/[\d.]+/)[0])}`);
@@ -367,7 +406,8 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     await p.close();                               // no waiting: the message to the tab may be lost
     await waitBadge(bls, 'none');
     const s = await waitStatus('none');
-    assert(s.settings.watching && s.nextAt > Date.now(), 'tab did not follow the stored Start');
+    assert(s.settings.watching, 'tab did not follow the stored Start');
+    await waitNextAt();
     await stopWatching(BLS_URL);
     await bls.waitForFunction(() => /press Start/.test(document.getElementById('rdv-maroc-badge').textContent));
   });
@@ -378,7 +418,7 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     const started = Date.now();
     await startWatching(BLS_URL);
     await waitBadge(bls, 'none');
-    const { nextAt } = await storage();
+    const nextAt = await waitNextAt();
     const secs = (nextAt - started) / 1000;
     assert(secs >= 59.5 && secs <= 70, `next refresh in ${secs.toFixed(1)} s`);
   });
@@ -390,9 +430,9 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     const started = Date.now();
     await startWatching(BLS_URL);
     await waitBadge(bls, 'none');
+    const nextAt = await waitNextAt();
     const before = hits[blsPath];
     scenario[blsPath] = 'bls-slot';
-    const { nextAt } = await storage();
     if (process.env.FAST) { hits[blsPath]++; await bls.reload(); hits[blsPath]--; }   // FAST=1: skip the real 60 s wait while iterating
     else await bls.waitForEvent('load', { timeout: Math.max(0, nextAt - Date.now()) + 10000 });
     const waited = process.env.FAST ? 60 : (Date.now() - started) / 1000;
@@ -835,6 +875,81 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     dash.once('dialog', d => d.accept());
     await dash.click('.doc [title="Delete"]');
     await dash.waitForFunction(() => !document.querySelector('.doc'));
+  });
+
+  // ---------- passphrase protection ----------
+  await check('protection: switching it on seals applicant details and documents; storage and the backup hold no plaintext', async () => {
+    await fresh();
+    const dash = await openDashboard();
+    await createApp(dash);
+    await uploadDoc(dash);
+    const s = await enableProtection(dash, 'horse-battery-7');
+    const a = s.applications[0];
+    assert(a.applicantLocked && !Object.keys(a.applicant || {}).length && a.privateEnc.iv && a.privateEnc.data, JSON.stringify(a));
+    const dump = JSON.stringify(s);
+    assert(!dump.includes('XB1234567') && !dump.includes('El Amrani') && !dump.includes('1994-03-07'), 'plaintext left in storage');
+    assert(s.settings.encryption.salt && s.settings.encryption.check, 'encryption settings missing');
+    await dash.click('#rows tr');
+    await dash.waitForSelector('#drawer:not(.hidden)');
+    assert((await dash.textContent('#pName')) === 'Yahya El Amrani', 'the tab that holds the key should still show the name');
+    assert(/XB1234567/.test(await dash.textContent('#kvApplicant')), 'the tab that holds the key should still show the passport');
+    const docs = await storedDocs(dash);
+    assert(docs.length === 1 && docs[0].encrypted && docs[0].hasEnc && !docs[0].hasBlob && docs[0].name === 'Encrypted document', JSON.stringify(docs));
+    await dash.click('#dTabs [data-t="docs"]');
+    await dash.waitForFunction(() => /passport-scan\.png/.test(((document.querySelector('.doc .doc-name') || {}).textContent) || ''));
+    await closeDrawer(dash);
+    const [dl] = await Promise.all([dash.waitForEvent('download'), dash.click('#railExport')]);
+    const json = fs.readFileSync(await dl.path(), 'utf8');
+    assert(!json.includes('XB1234567') && !json.includes('El Amrani') && /"encrypted": true/.test(json), 'backup leaks plaintext');
+  });
+
+  await check('protection: a new dashboard tab is locked; wrong passphrase refused, right one opens details and documents; popup and slot pop-up stay locked; removal restores plaintext', async () => {
+    await fresh();
+    const dash = await openDashboard();
+    await createApp(dash);
+    await uploadDoc(dash);
+    await enableProtection(dash, 'horse-battery-7');
+    const p = await openPopup();
+    const opts = await p.$$eval('#activeApp option', os => os.map(o => o.textContent));
+    assert(opts.some(o => /#1001 🔒 locked · Spain/.test(o)), opts.join(' | '));
+    await p.close();
+    const bls = await open(BLS_URL, 'bls-slot');
+    await startWatching(BLS_URL);
+    await waitBadge(bls, 'available');
+    await bls.waitForSelector('#rdv-maroc-slot .rdv-s-copy');
+    const popText = await bls.textContent('#rdv-maroc-slot');
+    assert(/locked with your passphrase/.test(popText) && !popText.includes('XB1234567'), popText);
+    const d2 = await openDashboard();
+    await d2.waitForSelector('#lockScreen:not(.hidden)');
+    await d2.waitForFunction(() => /Locked/.test(document.querySelector('#rows tr').textContent));
+    await d2.click('#lockUnlock');
+    await d2.fill('#pass1', 'wrong-pass-1');
+    await d2.click('#passOk');
+    await d2.waitForFunction(() => /Wrong passphrase/.test(document.getElementById('toast').textContent));
+    assert(await d2.isVisible('#lockScreen'), 'unlocked with a wrong passphrase');
+    await d2.click('#lockUnlock');
+    await d2.fill('#pass1', 'horse-battery-7');
+    await d2.click('#passOk');
+    await d2.waitForFunction(() => document.getElementById('lockScreen').classList.contains('hidden') && /Yahya El Amrani/.test(document.querySelector('#rows tr').textContent));
+    await d2.click('#rows tr');
+    await d2.waitForSelector('#drawer:not(.hidden)');
+    assert(/XB1234567/.test(await d2.textContent('#kvApplicant')), 'passport not shown after unlock');
+    await d2.click('#dTabs [data-t="docs"]');
+    await d2.waitForFunction(() => /passport-scan\.png/.test(((document.querySelector('.doc .doc-name') || {}).textContent) || ''));
+    await d2.click('.doc >> text=Preview');
+    await d2.waitForSelector('#viewer:not(.hidden) img');
+    await closeDrawer(d2);
+    await d2.click('#railLock');
+    await d2.click('#secDisable');
+    await d2.fill('#pass1', 'horse-battery-7');
+    await d2.click('#passOk');
+    await d2.waitForFunction(() => !document.getElementById('railLock').classList.contains('on'));
+    const end = Date.now() + 8000;
+    let s;
+    do { s = await storage(); if (s.applications[0].applicant && s.applications[0].applicant.passport) break; await d2.waitForTimeout(100); } while (Date.now() < end);
+    assert(s.applications[0].applicant.passport === 'XB1234567' && !s.applications[0].privateEnc && !s.settings.encryption, 'plaintext not restored');
+    const docs = await storedDocs(d2);
+    assert(docs.length === 1 && !docs[0].encrypted && docs[0].hasBlob && docs[0].name === 'passport-scan.png', JSON.stringify(docs));
   });
 
   await check('popup: lists the application and shows the booked appointment', async () => {

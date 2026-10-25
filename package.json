@@ -5,7 +5,7 @@
   "description": "RDV Maroc – browser extension that watches your open BLS/VFS appointment calendar (Morocco) and alerts you when a slot appears.",
   "scripts": {
     "test": "npm run test:unit && npm run test:smoke",
-    "test:unit": "node --test tests/detect.test.js",
+    "test:unit": "node --test tests/detect.test.js tests/crypto.test.js",
     "test:smoke": "node tests/smoke.js",
     "zip": "node scripts/zip.js"
   },

@@ -45,8 +45,20 @@ calendar page you open, so any BLS or VFS page in Morocco works.
    the small badge in the bottom-right corner says **Watching**. Destination, centre and category are
    read from the page and only label the alerts; open the popup if you want to check or change them.
 3. Keep the tab open; switch to other windows freely.
-4. On alert the tab comes to the front, the free day(s) are outlined in green and scrolled into view.
-   Click one, choose the time, confirm. The extension never clicks for you.
+4. On alert the tab comes to the front, a green **SLOT AVAILABLE** card shows the dates, a timer, and
+   your passport / name / birth date ready to copy for the form; **Show me the day** scrolls to the
+   free day and flashes it; the sound repeats until you dismiss the card. Click the day, choose the
+   time, confirm. The extension never clicks for you.
+
+While it watches, the panel in the bottom-right corner shows the state, a countdown ring to the next
+refresh and, when expanded, the last check, the application alerts are filed under, and quick
+actions (Check now, Pause / Resume, Stop sound, Dashboard). Every change (watching started, no
+slots, refreshing in 3 s, slot gone, verification needed, logged out, booked) shows briefly in the
+top-right corner, and the tab title says it too: `● 54s`, `🟢 SLOT!`, `⚠ Needs you`, `✅ Booked`.
+
+Date pickers on the application form (birth date, passport dates, travel dates) are never treated as
+the appointment calendar, and watching starts by itself only on pages about appointments; press
+**Start** in the popup if a page is not recognised.
 
 If the portal shows a verification or logs you out, the watcher pauses, tells you, and resumes on its
 own once you have dealt with it and the calendar is back.
@@ -72,7 +84,13 @@ Click the list icon in the popup (or right-click the extension icon → **Option
   with a reminder the day before.
 - **Documents checklist** and **Documents** (passport scan, photos, insurance…), kept in this browser
   only, with preview and download.
-- **Back up** (database icon) exports everything except the documents as JSON.
+- **Passphrase protection** (lock icon, off by default): applicant details, notes, the portal login
+  email and the documents are encrypted in the browser (AES-GCM, key derived from your passphrase
+  with PBKDF2). The dashboard asks for the passphrase when opened; the key stays in that tab's memory
+  only. Statuses, dates and history stay readable so the watcher keeps working; the popup and the
+  slot card show "locked" instead of your details. There is no recovery if you forget the passphrase.
+- **Back up** (database icon) exports everything except the documents as JSON; with protection on,
+  the details in the backup stay encrypted.
 
 Nothing leaves your browser: there is no server.
 

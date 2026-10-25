@@ -87,7 +87,7 @@ function renderApps(applications, settings) {
   const opts = [['', applications.length ? 'Auto (match destination)' : 'None yet – add one in the dashboard']];
   for (const a of applications) {
     const ap = a.applicant || {};
-    const name = [ap.givenName, ap.surname].filter(Boolean).join(' ') || 'Unnamed applicant';
+    const name = a.applicantLocked ? '🔒 locked' : [ap.givenName, ap.surname].filter(Boolean).join(' ') || 'Unnamed applicant';
     opts.push([a.id, `#${a.num} ${name} · ${destById(a.destinationId).name.split(' ·')[0]}${a.status === 'booked' ? ' ✓' : ''}`]);
   }
   const key = JSON.stringify(opts) + (settings.activeAppId || '');
@@ -114,7 +114,7 @@ async function renderStatus() {
   $('booked').classList.toggle('hidden', !booked);
   if (booked) {
     const ap = booked.appointment;
-    const who = [booked.applicant && booked.applicant.givenName, booked.applicant && booked.applicant.surname].filter(Boolean).join(' ');
+    const who = booked.applicantLocked ? '' : [booked.applicant && booked.applicant.givenName, booked.applicant && booked.applicant.surname].filter(Boolean).join(' ');
     $('bookedText').textContent = [who, destById(booked.destinationId).name.split(' ·')[0], ap.centre, ap.date, ap.time, ap.reference && `ref ${ap.reference}`].filter(Boolean).join(' · ');
   }
   $('lastCheck').textContent = watching ? fmt(status.at) : '—';
