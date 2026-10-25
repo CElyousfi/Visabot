@@ -241,6 +241,22 @@
     return out;
   }
 
+  // ---------- which calendars are the appointment calendar ----------
+  // Application forms have date pickers too (birth date, passport dates, travel dates). A picker
+  // bound to one of those fields is not the appointment calendar, however many days it offers.
+  const APPOINTMENT_WORDS = /appoint|slot|rendez|\brdv\b|cr[ée]neau|\bcita|booking|\bbook|calendar|calendrier|schedul|availab|disponib|موعد|حجز/;
+  const FORM_DATE_WORDS = /birth|\bdob\b|naissance|nacimiento|\bn[ée]\(e\)|expir|issue|issuance|d[ée]livr|validit|passport|passeport|pasaporte|travel|voyage|viaje|arriv|depart|return|retour|salida|llegada|\bentry\b|\bexit\b|start date|end date|from date|to date|date from|date to|\bcin\b|id card|carte nationale/;
+
+  /** True when a page (URL + title + headings) is about appointments, slots or booking. */
+  function hasAppointmentVocabulary(text) { return APPOINTMENT_WORDS.test(norm(text)); }
+
+  /** True when a date field's label names a personal / travel date rather than the appointment. */
+  function isFormDateField(label) {
+    const t = norm(label);
+    if (!t) return false;
+    return FORM_DATE_WORDS.test(t) && !APPOINTMENT_WORDS.test(t);
+  }
+
   // ---------- the portal's own confirmation page ----------
   const BOOKED_PHRASES = [
     'appointment confirmed', 'appointment is confirmed', 'appointment has been confirmed', 'appointment has been booked',
@@ -275,7 +291,7 @@
     };
   }
 
-  const api = { classify, extractDates, hash, norm, reloadDelaySeconds, detectContext, detectBooking, MIN_INTERVAL, NO_SLOT_PHRASES, SLOT_PHRASES, CAPTCHA_MARKERS, LOGIN_MARKERS };
+  const api = { classify, extractDates, hash, norm, reloadDelaySeconds, detectContext, detectBooking, hasAppointmentVocabulary, isFormDateField, MIN_INTERVAL, NO_SLOT_PHRASES, SLOT_PHRASES, CAPTCHA_MARKERS, LOGIN_MARKERS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RDVDetect = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

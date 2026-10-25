@@ -72,7 +72,35 @@ function kendoCalendar() {
   return page('BLS – Appointment', `<h2>Appointment Date</h2><div class="k-calendar"><table class="k-content"><tbody><tr>${cells}</tr></tbody></table></div>`);
 }
 
+/** BLS-style applicant form: birth date and passport expiry open a jQuery UI popup with every day
+ *  selectable, like the real one. Nothing here is an appointment calendar. */
+function blsApplicantForm() {
+  return page('BLS Spain – Applicant Details', `
+    <h2>Applicant Details</h2>
+    <form>
+      <div class="form-group"><label for="GivenName">Given name</label><input id="GivenName"></div>
+      <div class="form-group"><label for="DateOfBirth">Date of Birth</label><input id="DateOfBirth" class="hasDatepicker" autocomplete="off"></div>
+      <div class="form-group"><label for="PassportExpiry">Passport Expiry Date</label><input id="PassportExpiry" class="hasDatepicker" autocomplete="off"></div>
+      <div class="form-group"><label for="TravelDate">Intended date of travel</label><input id="TravelDate" class="hasDatepicker" autocomplete="off"></div>
+    </form>
+    <div id="ui-datepicker-div" class="ui-datepicker ui-widget" style="position:absolute;display:none"></div>`,
+    `<script>
+      // Like jQuery UI: the popup is filled and shown when a date input gets focus, hidden on blur.
+      document.addEventListener('focusin', e => {
+        if (!e.target.classList || !e.target.classList.contains('hasDatepicker')) return;
+        let rows = '', d = 1;
+        for (let w = 0; w < 5; w++) { rows += '<tr>'; for (let i = 0; i < 7; i++, d++) rows += d <= 30 ? '<td data-handler="selectDay"><a class="ui-state-default" href="#">' + d + '</a></td>' : '<td class="ui-datepicker-other-month ui-state-disabled">&nbsp;</td>'; rows += '</tr>'; }
+        const div = document.getElementById('ui-datepicker-div');
+        div.innerHTML = '<div class="ui-datepicker-title">March 1994</div><table class="ui-datepicker-calendar"><tbody>' + rows + '</tbody></table>';
+        const r = e.target.getBoundingClientRect();
+        div.style.left = r.left + 'px'; div.style.top = (r.bottom + window.scrollY) + 'px'; div.style.display = 'block';
+      });
+      document.addEventListener('focusout', () => { document.getElementById('ui-datepicker-div').style.display = 'none'; });
+    </script>`, '<header><a href="#">Logout</a></header>');
+}
+
 const FIXTURES = {
+  'bls-form': () => blsApplicantForm(),
   'bls-none': () => blsCalendar([]),
   'bls-slot': () => blsCalendar([12, 19]),
   'bls-auto': () => blsCalendar([12, 19], { centre: 'Casablanca', category: 'Tourism' }),
@@ -588,6 +616,38 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     const { settings } = await storage();
     assert(!settings.watching && /stopped/.test((await badgeState(auto)).text), JSON.stringify(await badgeState(auto)));
     assert(!(await auto.$('.rdv-slot-day')), 'highlight left behind while stopped');
+  });
+
+  await check('auto: an applicant form with birth / passport / travel date pickers never starts or alerts', async () => {
+    await fresh(AUTO);
+    const form = await open('https://www.blsspainmorocco.com/MAR/account/applicant-details', 'bls-form');
+    await form.waitForSelector('#rdv-maroc-badge');
+    for (const id of ['DateOfBirth', 'PassportExpiry', 'TravelDate']) {
+      await form.focus(`#${id}`);
+      await form.waitForSelector('#ui-datepicker-div td a');         // 30 "selectable" days are showing
+      await form.waitForTimeout(1200);
+      await form.focus('#GivenName');
+      await form.waitForTimeout(600);
+    }
+    const s = await storage();
+    assert(!s.settings.watching, 'started watching on an applicant form');
+    assert((await notifications()).length === 0, `alerted on a form date picker: ${await notifications()}`);
+    assert(!(await form.$('.rdv-slot-day')), 'form picker days were highlighted');
+    assert(/waiting for an appointment calendar/.test((await badgeState(form)).text), JSON.stringify(await badgeState(form)));
+  });
+
+  await check('a manual Start on the applicant form watches but ignores its date pickers', async () => {
+    await fresh();
+    const form = await open('https://www.blsspainmorocco.com/MAR/account/applicant-details', 'bls-form');
+    await form.waitForSelector('#rdv-maroc-badge');
+    await startWatching('https://www.blsspainmorocco.com/MAR/account/applicant-details');
+    await form.focus('#DateOfBirth');
+    await form.waitForSelector('#ui-datepicker-div td a');
+    await form.waitForTimeout(1500);
+    const st = await badgeState(form);
+    const s = await storage();
+    assert(s.settings.watching, 'manual Start was ignored');
+    assert(st.state !== 'available' && (await notifications()).length === 0, `birth-date picker counted as a slot: ${JSON.stringify(st)}`);
   });
 
   await check('auto: a VFS calendar rendered after load starts watching by itself', async () => {

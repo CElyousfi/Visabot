@@ -148,6 +148,24 @@ test('detectBooking ignores pages that only mention confirmation', () => {
   assert.equal(D.detectBooking('').booked, false);
 });
 
+test('isFormDateField: personal and travel date fields are not the appointment calendar', () => {
+  for (const l of ['DateOfBirth Date of Birth', 'Date de naissance', 'PassportExpiry Passport Expiry Date', "Date de délivrance du passeport",
+    'Intended date of arrival', 'Fecha de salida', 'Travel start date', 'CIN expiry']) {
+    assert.equal(D.isFormDateField(l), true, l);
+  }
+  for (const l of ['AppointmentDate Appointment Date', 'Date du rendez-vous', 'Select a slot', 'Fecha de la cita', 'Booking date', '']) {
+    assert.equal(D.isFormDateField(l), false, l);
+  }
+});
+
+test('hasAppointmentVocabulary: appointment pages pass, applicant forms do not', () => {
+  assert.equal(D.hasAppointmentVocabulary('https://www.blsspainmorocco.com/MAR/appointment/newappointment BLS Spain'), true);
+  assert.equal(D.hasAppointmentVocabulary('https://visa.vfsglobal.com/mar/en/ita/book-appointment'), true);
+  assert.equal(D.hasAppointmentVocabulary('Choisir un créneau'), true);
+  assert.equal(D.hasAppointmentVocabulary('https://www.blsspainmorocco.com/MAR/account/applicant-details Applicant Details Personal information'), false);
+  assert.equal(D.hasAppointmentVocabulary(''), false);
+});
+
 test('hash is stable and changes with input', () => {
   assert.equal(D.hash('available|2026-11-12|3|0'), D.hash('available|2026-11-12|3|0'));
   assert.notEqual(D.hash('available|2026-11-12|3|0'), D.hash('available|2026-11-12|4|0'));

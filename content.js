@@ -89,9 +89,47 @@
   const DISABLED_CLASS = { test: cls => hasToken(cls, DISABLED_TOKENS) || tokens(cls).some(t => DISABLED_PATTERN.test(t)) };
   const ENABLED_CLASS = { test: cls => hasToken(cls, ENABLED_TOKENS) };
 
+  // ---------- form date pickers are not the appointment calendar ----------
+  const CALENDAR_BOX = '.ui-datepicker, mat-calendar, .mat-calendar, .mat-datepicker-content, .k-calendar, .flatpickr-calendar, .datepicker, .react-datepicker, [class*="calendar" i], [class*="datepicker" i], table';
+  const POPUP_HOST = '.cdk-overlay-container, .mat-datepicker-popup, .k-animation-container, .datepicker-dropdown, .ui-datepicker:not(.ui-datepicker-inline)';
+  let lastFocusedInput = null;          // a popup picker shows the dates of the field that opened it, even after blur
+  document.addEventListener('focusin', e => { if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) lastFocusedInput = e.target; }, true);
+  const isInput = el => el && /^(INPUT|TEXTAREA)$/.test(el.tagName);
+  function isPopupBox(box) {
+    if (box.id === 'ui-datepicker-div' || box.closest(POPUP_HOST)) return true;
+    const pos = getComputedStyle(box).position;
+    return pos === 'absolute' || pos === 'fixed';
+  }
+  /** The form field a calendar belongs to, or null when it stands on its own. */
+  function boundField(box) {
+    if (box.id) {
+      const owner = document.querySelector(`[aria-owns~="${CSS.escape(box.id)}"], [aria-controls~="${CSS.escape(box.id)}"], [aria-describedby~="${CSS.escape(box.id)}"]`);
+      if (owner) return owner;
+    }
+    if (isPopupBox(box)) {
+      if (isInput(document.activeElement)) return document.activeElement;
+      if (lastFocusedInput && lastFocusedInput.isConnected) return lastFocusedInput;
+      return null;
+    }
+    const prev = box.previousElementSibling;
+    if (isInput(prev)) return prev;
+    const wrap = box.closest('label, .form-group, .mat-form-field, .mat-mdc-form-field, .field, .input-group');
+    const inputs = wrap ? wrap.querySelectorAll('input:not([type=hidden]), textarea') : [];
+    return inputs.length === 1 ? inputs[0] : null;
+  }
+  /** A picker for a birth / passport / travel date: ignore it, whatever it shows. */
+  function isFormPicker(box, cache) {
+    if (cache.has(box)) return cache.get(box);
+    const f = boundField(box);
+    const r = !!f && D.isFormDateField(fieldLabel(f));
+    cache.set(box, r);
+    return r;
+  }
+
   function collectDayCells(area) {
     const seen = new Set();
     const cells = [];
+    const pickers = new Map();
     let total = 0, enabled = 0;
     for (const sel of DAY_CELL_SELECTORS) {
       let nodes;
@@ -100,6 +138,8 @@
         if (seen.has(n)) continue;
         const txt = (n.textContent || '').trim();
         if (!/^\d{1,2}$/.test(txt)) continue;     // only numeric day cells
+        const box = n.parentElement && n.parentElement.closest(CALENDAR_BOX);
+        if (box && isFormPicker(box, pickers)) continue;
         // A <td> wrapping a <button> for the same day (Angular Material) is one cell, not two.
         let nested = false;
         for (const s of seen) if (s.contains(n) || n.contains(s)) { nested = true; break; }
@@ -503,6 +543,13 @@
     const calendar = snap.totalDays >= 7 || snap.optionCount > 0 || res.state === 'available' || res.state === 'none';
     if (res.state === 'captcha') { idle('captcha', 'Needs you', 'solve the verification; I resume after'); return false; }
     if (res.state === 'login') { idle('login', 'Logged out', 'log in and open the calendar; I resume after'); return false; }
+    // Only pages about appointments start by themselves; a form page with date pickers does not.
+    // An area the user picked, or a real slot list, is trusted. Start in the popup always works.
+    const pageWords = `${location.href} ${document.title} ${[...document.querySelectorAll('h1, h2, h3, h4, legend')].map(e => e.textContent).join(' ')}`;
+    if (!settings.selector && !(snap.optionCount > 0) && !D.hasAppointmentVocabulary(pageWords)) {
+      idle('unknown', 'RDV Maroc', 'waiting for an appointment calendar – press Start if this is it');
+      return false;
+    }
     if (!calendar) { idle('unknown', 'RDV Maroc', 'waiting for a calendar on this page'); return false; }
     await patchSettings({ watching: true, watchTabId: myTabId, autoStarted: true, manualStopUrl: '' });
     await store({ status: { state: 'unknown', at: Date.now(), tabId: myTabId, url: location.href } });
