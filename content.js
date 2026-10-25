@@ -32,9 +32,11 @@
     if (alertState) { lastFingerprint = alertState.fp || null; lastAlertAt = alertState.at || 0; }
   }
   async function saveAlertState() { await store({ alertState: { fp: lastFingerprint, at: lastAlertAt } }); }
+  let lastWritten = '';                 // our own settings writes, so the storage listener ignores them
   async function patchSettings(patch) {
     const { settings: cur = {} } = await load('settings');
     const next = Object.assign({}, cur, patch);
+    lastWritten = JSON.stringify(next);
     await store({ settings: next });
     if (settings) Object.assign(settings, patch);
     return next;
@@ -533,10 +535,26 @@
     await evaluate('reload');
   }
 
+  // Start / Stop pressed anywhere (popup, dashboard, another tab) lands in storage. Follow storage,
+  // so a message that never arrives (the popup closed a moment too early) cannot leave this tab
+  // watching when it should not be, or idle when it should watch. A start pressed while idle
+  // re-arms the alert; our own writes and the duplicate message trigger are coalesced into one start.
+  let startTimer = null;
+  function requestStart() { clearTimeout(startTimer); startTimer = setTimeout(start, 80); }
+  const WATCH_KEYS = ['watching', 'watchTabId', 'selector', 'interval', 'autoRefresh', 'autoStart', 'manualStopUrl', 'pauseOnHit'];
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes.settings) return;
+    const n = changes.settings.newValue || {}, o = changes.settings.oldValue || {};
+    if (JSON.stringify(n) === lastWritten) return;
+    if (!WATCH_KEYS.some(k => n[k] !== o[k])) return;
+    if (n.watching && !o.watching) { lastFingerprint = null; lastAlertAt = 0; saveAlertState(); }
+    requestStart();
+  });
+
   chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     (async () => {
       if (msg.type === 'pickArea') { startPicking(); reply({ ok: true }); }
-      else if (msg.type === 'settingsChanged') { lastFingerprint = null; lastAlertAt = 0; await saveAlertState(); await start(); reply({ ok: true }); }
+      else if (msg.type === 'settingsChanged') { requestStart(); reply({ ok: true }); }
       else if (msg.type === 'checkNow') { settings = await readSettings(); await evaluate('manual'); reply({ ok: true }); }
       else if (msg.type === 'ping') reply({ ok: true, url: location.href, tabId: myTabId });
       else if (msg.type === 'pageContext') { settings = await readSettings(); reply({ ok: true, context: await applyPageContext() }); }

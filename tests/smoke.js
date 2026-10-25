@@ -1,7 +1,10 @@
 /* tests/smoke.js — loads the unpacked extension into Playwright's Chromium and runs it against
  * fake BLS and VFS calendar pages served at the real portal URLs (via request routing, nothing
  * reaches the network). Drives the real popup buttons. Takes ~2 min: it waits for one real
- * 60 s auto-refresh.  Run: npm run test:smoke   (HEADED=1 to watch it)
+ * 60 s auto-refresh.  Run: npm run test:smoke   (HEADED=1 to watch it, FAST=1 to skip the 60 s wait)
+ *
+ * Every scenario starts from a clean state: storage and the documents store are wiped, it opens its
+ * own tabs, and they are closed when it ends, pass or fail. No scenario depends on another.
  *
  * The fixtures only imitate calendar markup. Nothing here logs in, solves a verification or books. */
 'use strict';
@@ -12,7 +15,10 @@ const { chromium } = require('playwright');
 
 const ROOT = path.join(__dirname, '..');
 const BLS_URL = 'https://www.blsspainmorocco.com/MAR/appointment/slotselection';
+const BLS_AUTO_URL = 'https://www.blsspainmorocco.com/MAR/appointment/newappointment';
+const BLS_CONFIRM_URL = 'https://www.blsspainmorocco.com/MAR/appointment/confirmation';
 const VFS_URL = 'https://visa.vfsglobal.com/mar/en/ita/book-appointment';
+const VFS_AUTO_URL = 'https://visa.vfsglobal.com/mar/fr/ita/appointment';
 
 // ---------- fixtures ----------
 function page(title, body, head = '', header = '<header><a href="#">Logout</a> | <a href="#">Login</a></header>') {
@@ -86,10 +92,17 @@ const FIXTURES = {
 
 // ---------- tiny runner ----------
 const results = [];
+const opened = [];                           // pages a scenario opened; closed when it ends
 async function check(name, fn) {
   const t0 = Date.now();
   try { await fn(); results.push({ name, ok: true }); console.log(`  ✔ ${name} (${((Date.now() - t0) / 1000).toFixed(1)}s)`); }
   catch (e) { results.push({ name, ok: false, err: e }); console.log(`  ✘ ${name}\n      ${String(e && e.message || e).split('\n').join('\n      ')}`); }
+  finally {
+    for (const p of opened.splice(0)) { try { if (!p.isClosed()) await p.close(); } catch (e) {} }
+    // The background's tab-closed handler writes settings a moment after a watched tab closes;
+    // let it finish so it cannot overwrite the next scenario's clean state.
+    await new Promise(r => setTimeout(r, 300));
+  }
 }
 function assert(cond, msg) { if (!cond) throw new Error(msg); }
 
@@ -134,9 +147,34 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     }
   }
 
+  const MANUAL = { autoStart: false, auto: false, sound: false, interval: 60 };
+  const AUTO = { autoStart: true, auto: true, sound: false, interval: 60 };
+  /** Clean slate: no storage, no documents, no notifications; then the given settings. */
+  async function fresh(settings = MANUAL) {
+    await clearNotifications();
+    await sw.evaluate(async (s) => {
+      await chrome.storage.local.clear();
+      await new Promise(res => {
+        const r = indexedDB.deleteDatabase('rdv-maroc');
+        r.onsuccess = r.onerror = r.onblocked = () => res();
+        setTimeout(res, 2000);
+      });
+      await chrome.storage.local.set({ settings: s });
+    }, settings);
+  }
+  /** Opens a portal URL serving `fixture`; the tab is closed when the scenario ends. */
+  async function open(url, fixture) {
+    scenario[new URL(url).pathname] = fixture;
+    const p = await context.newPage();
+    opened.push(p);
+    await p.goto(url);
+    return p;
+  }
+
   /** Opens popup.html in a tab, pointed at `targetUrl` as if it were the active tab. */
   async function openPopup(targetUrl) {
     const p = await context.newPage();
+    opened.push(p);
     await p.goto(`chrome-extension://${extId}/popup.html`);
     await p.waitForSelector('#destination option', { state: 'attached' });
     if (targetUrl) {
@@ -145,23 +183,71 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     }
     return p;
   }
+  /** Presses Start in the popup for `url`, with the choices a user would make. */
+  async function startWatching(url, { destination = 'spain', centre = 'Rabat', clearPick = false } = {}) {
+    const p = await openPopup(url);
+    await p.selectOption('#destination', destination);
+    if (centre) await p.selectOption('#centre', centre);
+    if (clearPick) await p.click('#clearPick');
+    await p.click('#start');
+    await p.waitForFunction(() => /Watching\./.test(document.getElementById('hint').textContent));   // the popup has finished
+    await p.close();
+  }
+  async function stopWatching(url) {
+    const p = await openPopup(url);
+    await p.click('#stop');
+    await p.waitForFunction(() => !document.getElementById('start').classList.contains('hidden'));
+    await p.close();
+  }
+  async function openDashboard() {
+    const d = await context.newPage();
+    opened.push(d);
+    await d.goto(`chrome-extension://${extId}/dashboard.html`);
+    await d.waitForSelector('#rows', { state: 'attached' });
+    return d;
+  }
+  /** Creates "Yahya El Amrani · Spain · Rabat" through the dashboard UI; returns its id. */
+  async function createApp(dash) {
+    await dash.click('#newApp');
+    await dash.waitForSelector('#drawer:not(.hidden) [data-key="surname"]');
+    await dash.fill('[data-key="givenName"]', 'Yahya');
+    await dash.fill('[data-key="surname"]', 'El Amrani');
+    await dash.fill('[data-key="passport"]', 'XB1234567');
+    await dash.fill('[data-key="birthDate"]', '1994-03-07');
+    await dash.selectOption('[data-key="destinationId"]', 'spain');
+    await dash.selectOption('[data-key="centre"]', 'Rabat');
+    await dash.click('#editBtn');                     // Done
+    await dash.waitForFunction(() => document.getElementById('pName').textContent === 'Yahya El Amrani');
+    const { applications } = await storage();
+    assert(applications.length === 1, `${applications.length} applications`);
+    return applications[0].id;
+  }
+  /** Opens the portal's confirmation page and waits until the application is booked. */
+  async function bookViaPortal(appId) {
+    const conf = await open(BLS_CONFIRM_URL, 'bls-booked');
+    await waitBadge(conf, 'booked', 10000);
+    const end = Date.now() + 5000;
+    let a;
+    do { a = (await storage()).applications.find(x => x.id === appId); if (a && a.status === 'booked') break; await conf.waitForTimeout(100); } while (Date.now() < end);
+    assert(a && a.status === 'booked', `status ${a && a.status}`);
+    return conf;
+  }
 
   console.log(`Extension ${extId} loaded in ${await sw.evaluate(() => navigator.userAgent.match(/Chrome\/[\d.]+/)[0])}`);
-  // The checks below press the buttons by hand; the autonomous mode has its own section at the end.
-  await sw.evaluate(() => chrome.storage.local.set({ settings: { autoStart: false, auto: false } }));
 
   // ---------- manifest ----------
   await check('chrome://extensions reports no errors or warnings for the extension', async () => {
     const p = await context.newPage();
+    opened.push(p);
     await p.goto('chrome://extensions/');
     const info = await p.evaluate((id) => new Promise(r => chrome.developerPrivate.getExtensionInfo(id, r)), extId);
-    await p.close();
     const problems = [...(info.manifestErrors || []).map(e => e.message), ...(info.installWarnings || []), ...(info.runtimeErrors || []).map(e => e.message)];
     assert(!problems.length, problems.join('\n'));
   });
 
   // ---------- popup ----------
   await check('popup lists every destination and its centres', async () => {
+    await fresh();
     const p = await openPopup();
     const dests = await p.$$eval('#destination option', os => os.map(o => [o.value, o.textContent]));
     const ids = dests.map(d => d[0]);
@@ -173,10 +259,10 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
       for (const c of centres) assert(got.includes(c), `${id}: missing centre ${c} (got ${got.join(', ')})`);
     }
     assert((await p.$$eval('#category option', os => os.length)) >= 8, 'categories missing');
-    await p.close();
   });
 
   await check('France is greyed out, explained, and cannot be started', async () => {
+    await fresh();
     const p = await openPopup();
     const fr = await p.$eval('#destination option[value="france"]', o => ({ cls: o.className, color: getComputedStyle(o).color }));
     const normal = await p.$eval('#destination option[value="spain"]', o => getComputedStyle(o).color);
@@ -188,11 +274,10 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert((await p.$eval('#start', b => getComputedStyle(b).opacity)) < 1, 'disabled Start button should look disabled');
     await p.selectOption('#destination', 'spain');
     assert(!(await p.isVisible('#franceNote')) && !(await p.isDisabled('#start')), 'Spain re-enables Start');
-    await p.close();
   });
 
   await check('"Test alert" creates a desktop notification and plays the sound', async () => {
-    await clearNotifications();
+    await fresh({ ...MANUAL, sound: true });
     const p = await openPopup();
     await p.click('#test');
     await p.waitForFunction(() => /Test alert sent/.test(document.getElementById('hint').textContent));
@@ -204,22 +289,20 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     const r = await p.evaluate(() => chrome.runtime.sendMessage({ type: 'slotFound', test: true, title: 'RDV Maroc: test alert', body: 'smoke', tabId: null, sound: true }));
     assert(r && r.soundPlayed === true, `alert.wav did not play in the offscreen document (${JSON.stringify(r)})`);
     assert((await sw.evaluate(() => chrome.action.getBadgeText({}))) !== '!', 'test alert must not leave the red "slot" badge');
-    await p.close();
-    await clearNotifications();
   });
 
-  // ---------- BLS flow ----------
-  const blsPath = new URL(BLS_URL).pathname;
-  scenario[blsPath] = 'bls-none';
-  const bls = await context.newPage();
-  await bls.goto(BLS_URL);
-
+  // ---------- BLS flow, buttons pressed by hand ----------
   await check('BLS page shows the in-page badge before watching', async () => {
+    await fresh();
+    const bls = await open(BLS_URL, 'bls-none');
     await bls.waitForSelector('#rdv-maroc-badge', { timeout: 10000 });
     assert(/ready/.test((await badgeState(bls)).text), JSON.stringify(await badgeState(bls)));
   });
 
   await check('"Pick calendar area": clicking a day cell selects the whole calendar', async () => {
+    await fresh();
+    const bls = await open(BLS_URL, 'bls-none');
+    await bls.waitForSelector('#rdv-maroc-badge');
     const p = await openPopup(BLS_URL);
     await p.click('#pick').catch(() => {});        // the popup closes itself
     await waitBadge(bls, 'unknown');
@@ -231,31 +314,54 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert(picked >= 28, `picked area "${settings.selector}" holds ${picked} cells, expected the whole calendar`);
   });
 
-  let started;
   await check('"Start watching this tab" with interval 60 s → status "No slots"', async () => {
+    await fresh();
+    const bls = await open(BLS_URL, 'bls-none');
     const p = await openPopup(BLS_URL);
     await p.selectOption('#destination', 'spain');
     await p.selectOption('#centre', 'Rabat');
     await p.$eval('#interval', el => { el.value = '60'; el.dispatchEvent(new Event('input')); el.dispatchEvent(new Event('change')); });
     await p.$eval('#sound', el => { el.checked = false; el.dispatchEvent(new Event('change')); });
     await p.click('#start');
-    started = Date.now();
     await waitBadge(bls, 'none');
     await p.waitForFunction(() => document.getElementById('statusPill').textContent === 'No slots');
     const { settings, status } = await storage();
     assert(settings.watching && settings.interval === 60 && settings.watchTabId === (await tabIdOf(BLS_URL)), JSON.stringify(settings));
     assert(status.state === 'none', JSON.stringify(status));
-    await p.close();
+  });
+
+  await check('Start takes effect even if the popup closes before its message is sent', async () => {
+    await fresh();
+    const bls = await open(BLS_URL, 'bls-none');
+    await bls.waitForSelector('#rdv-maroc-badge');
+    const p = await openPopup(BLS_URL);
+    await p.click('#start');
+    await p.close();                               // no waiting: the message to the tab may be lost
+    await waitBadge(bls, 'none');
+    const s = await waitStatus('none');
+    assert(s.settings.watching && s.nextAt > Date.now(), 'tab did not follow the stored Start');
+    await stopWatching(BLS_URL);
+    await bls.waitForFunction(() => /press Start/.test(document.getElementById('rdv-maroc-badge').textContent));
   });
 
   await check('refresh is scheduled 60–69 s out (never under 60 s)', async () => {
+    await fresh();
+    const bls = await open(BLS_URL, 'bls-none');
+    const started = Date.now();
+    await startWatching(BLS_URL);
+    await waitBadge(bls, 'none');
     const { nextAt } = await storage();
     const secs = (nextAt - started) / 1000;
     assert(secs >= 59.5 && secs <= 70, `next refresh in ${secs.toFixed(1)} s`);
   });
 
   await check('auto-refresh fires after the interval and a new slot alerts once', async () => {
-    await clearNotifications();
+    await fresh();
+    const blsPath = new URL(BLS_URL).pathname;
+    const bls = await open(BLS_URL, 'bls-none');
+    const started = Date.now();
+    await startWatching(BLS_URL);
+    await waitBadge(bls, 'none');
     const before = hits[blsPath];
     scenario[blsPath] = 'bls-slot';
     const { nextAt } = await storage();
@@ -272,6 +378,10 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   });
 
   await check('after a refresh the interval is still 60 s and the same slot does not re-alert', async () => {
+    await fresh();
+    const bls = await open(BLS_URL, 'bls-slot');
+    await startWatching(BLS_URL);
+    await waitBadge(bls, 'available');
     const { lastHit } = await storage();
     const t0 = Date.now();
     await bls.reload();
@@ -287,6 +397,11 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   });
 
   await check('slot disappears then reappears → alerts again', async () => {
+    await fresh();
+    const blsPath = new URL(BLS_URL).pathname;
+    const bls = await open(BLS_URL, 'bls-slot');
+    await startWatching(BLS_URL);
+    await waitBadge(bls, 'available');
     scenario[blsPath] = 'bls-none';
     await bls.reload(); await waitBadge(bls, 'none');
     scenario[blsPath] = 'bls-slot';
@@ -296,6 +411,11 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   });
 
   await check('Cloudflare-style "Just a moment" page pauses the watcher', async () => {
+    await fresh();
+    const blsPath = new URL(BLS_URL).pathname;
+    const bls = await open(BLS_URL, 'bls-none');
+    await startWatching(BLS_URL);
+    await waitBadge(bls, 'none');
     scenario[blsPath] = 'cf-challenge';
     await bls.reload();
     await waitBadge(bls, 'captcha');
@@ -304,32 +424,34 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert(/human check/i.test(await bls.textContent('#rdv-maroc-banner')), 'banner should ask the user');
   });
 
-  async function restart(url) {
-    const p = await openPopup(url);
-    await p.click('#start');
-    await p.close();
-  }
-
   await check('a visible CAPTCHA widget (no text) pauses the watcher', async () => {
-    scenario[blsPath] = 'captcha-widget';
-    await bls.reload();
-    await waitBadge(bls, 'unknown');                // not watching → ready badge
-    await restart(BLS_URL);
+    await fresh();
+    const bls = await open(BLS_URL, 'captcha-widget');
+    await bls.waitForSelector('#rdv-maroc-badge');
+    await startWatching(BLS_URL);
     await waitBadge(bls, 'captcha');
     const { settings, status } = await waitStatus('captcha');
     assert(settings.watching === false && status.state === 'captcha', JSON.stringify(status));
   });
 
   await check('a paused watcher does not refresh by itself', async () => {
+    await fresh();
+    const blsPath = new URL(BLS_URL).pathname;
+    const bls = await open(BLS_URL, 'cf-challenge');
+    await bls.waitForSelector('#rdv-maroc-badge');
+    await startWatching(BLS_URL);
+    await waitBadge(bls, 'captcha');
+    await waitStatus('captcha');
     const before = hits[blsPath];
     await bls.waitForTimeout(3000);
     assert(hits[blsPath] === before && !(await storage()).nextAt, 'refresh still scheduled while paused');
   });
 
   await check('being logged out stops the watcher', async () => {
-    scenario[blsPath] = 'bls-none';
-    await bls.reload();
-    await restart(BLS_URL);
+    await fresh();
+    const blsPath = new URL(BLS_URL).pathname;
+    const bls = await open(BLS_URL, 'bls-none');
+    await startWatching(BLS_URL);
     await waitBadge(bls, 'none');
     scenario[blsPath] = 'login';
     await bls.reload();
@@ -339,9 +461,9 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   });
 
   await check('Stop then Start again re-arms the alert for a slot already seen', async () => {
-    scenario[blsPath] = 'bls-slot';
-    await bls.reload();
-    await restart(BLS_URL);
+    await fresh();
+    const bls = await open(BLS_URL, 'bls-slot');
+    await startWatching(BLS_URL);
     await waitBadge(bls, 'available');
     const { lastHit } = await storage();
     const p = await openPopup(BLS_URL);
@@ -357,44 +479,41 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   });
 
   await check('Stop clears the refresh timer and returns the badge to ready', async () => {
-    const p = await openPopup(BLS_URL);
-    await p.click('#stop');
-    await p.close();
+    await fresh();
+    const bls = await open(BLS_URL, 'bls-none');
+    await startWatching(BLS_URL);
+    await waitBadge(bls, 'none');
+    await stopWatching(BLS_URL);
     await bls.waitForFunction(() => /press Start/.test(document.getElementById('rdv-maroc-badge').textContent));
     const s = await storage();
     assert(!s.settings.watching && !s.nextAt, JSON.stringify({ watching: s.settings.watching, nextAt: s.nextAt }));
   });
 
   await check('Kendo-style calendar with only disabled days is not a slot', async () => {
-    scenario[blsPath] = 'kendo-none';
-    await bls.reload();
-    const p = await openPopup(BLS_URL);
-    await p.click('#clearPick');
-    await p.click('#start');
-    await p.close();
+    await fresh();
+    const bls = await open(BLS_URL, 'kendo-none');
+    await bls.waitForSelector('#rdv-maroc-badge');
+    await startWatching(BLS_URL, { clearPick: true });
     await bls.waitForFunction(() => ['none', 'unknown', 'available'].includes(document.getElementById('rdv-maroc-badge').dataset.state) && !/checking/.test(document.getElementById('rdv-maroc-badge').textContent));
     const st = (await badgeState(bls)).state;
     assert(st !== 'available', 'disabled Kendo days were counted as selectable');
   });
-  await bls.close();
 
   // ---------- VFS flow (SPA calendar rendered after load) ----------
-  const vfsPath = new URL(VFS_URL).pathname;
-  scenario[vfsPath] = 'vfs-none';
-  const vfs = await context.newPage();
-  await vfs.goto(VFS_URL);
-  await vfs.waitForSelector('#rdv-maroc-badge');
-
   await check('VFS: watching an Angular Material calendar → "No slots"', async () => {
-    const p = await openPopup(VFS_URL);
-    await p.selectOption('#destination', 'italy');
-    await p.click('#clearPick');
-    await p.click('#start');
-    await p.close();
+    await fresh();
+    const vfs = await open(VFS_URL, 'vfs-none');
+    await vfs.waitForSelector('#rdv-maroc-badge');
+    await startWatching(VFS_URL, { destination: 'italy', centre: '', clearPick: true });
     await waitBadge(vfs, 'none');
   });
 
   await check('VFS: a day enabling live (no reload) alerts via the DOM observer', async () => {
+    await fresh();
+    const vfs = await open(VFS_URL, 'vfs-none');
+    await vfs.waitForSelector('#rdv-maroc-badge');
+    await startWatching(VFS_URL, { destination: 'italy', centre: '' });
+    await waitBadge(vfs, 'none');
     await clearNotifications();
     await vfs.evaluate(() => {
       const b = document.querySelectorAll('.mat-calendar-body-cell')[11];
@@ -408,7 +527,11 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   });
 
   await check('VFS: after a refresh the late-rendering calendar does not re-alert the same slot', async () => {
-    scenario[vfsPath] = 'vfs-slot';
+    await fresh();
+    const vfs = await open(VFS_URL, 'vfs-slot');
+    await vfs.waitForSelector('#rdv-maroc-badge');
+    await startWatching(VFS_URL, { destination: 'italy', centre: '' });
+    await waitBadge(vfs, 'available', 8000);
     const { lastHit } = await storage();
     await vfs.reload();
     await waitBadge(vfs, 'available', 8000);
@@ -419,15 +542,9 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   });
 
   // ---------- autonomous mode: nothing pressed, choices read from the page ----------
-  await sw.evaluate(() => chrome.storage.local.set({ settings: { autoStart: true, auto: true, sound: false, interval: 60 }, alertState: null, lastHit: null, status: null }));
-  await clearNotifications();
-  const BLS_AUTO_URL = 'https://www.blsspainmorocco.com/MAR/appointment/newappointment';
-  const blsAutoPath = new URL(BLS_AUTO_URL).pathname;
-  scenario[blsAutoPath] = 'bls-auto';
-  const auto = await context.newPage();
-  await auto.goto(BLS_AUTO_URL);
-
   await check('auto: a BLS calendar with free days starts watching and alerts without any click', async () => {
+    await fresh(AUTO);
+    const auto = await open(BLS_AUTO_URL, 'bls-auto');
     await waitBadge(auto, 'available', 15000);
     const s = await waitStatus('available');
     assert(s.settings.watching && s.settings.autoStarted, JSON.stringify(s.settings));
@@ -436,25 +553,34 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   });
 
   await check('auto: destination, centre and category are read from the portal page', async () => {
+    await fresh(AUTO);
+    const auto = await open(BLS_AUTO_URL, 'bls-auto');
+    await waitBadge(auto, 'available', 15000);
+    await waitStatus('available');
     const { settings, lastHit } = await storage();
     assert(settings.destinationId === 'spain' && settings.centre === 'Casablanca' && settings.category === 'Tourism · Tourisme', JSON.stringify([settings.destinationId, settings.centre, settings.category]));
     assert(lastHit.where === 'Spain · Casablanca · Tourism · Tourisme', lastHit.where);
     const p = await openPopup(BLS_AUTO_URL);
     await p.waitForFunction(() => /From the portal page: Spain · Casablanca · Tourism/.test(document.getElementById('autoText').textContent));
     assert((await p.inputValue('#destination')) === 'spain' && (await p.inputValue('#centre')) === 'Casablanca', 'popup lists do not show the detected values');
-    await p.close();
   });
 
   await check('auto: the free days are outlined on the page, never clicked', async () => {
+    await fresh(AUTO);
+    const blsAutoPath = new URL(BLS_AUTO_URL).pathname;
+    const before = hits[blsAutoPath] || 0;
+    const auto = await open(BLS_AUTO_URL, 'bls-auto');
+    await waitBadge(auto, 'available', 15000);
     const days = await auto.$$eval('.rdv-slot-day', els => els.map(e => e.textContent.trim()));
     assert(days.length === 2 && days.includes('12') && days.includes('19'), `highlighted: ${days}`);
-    assert(hits[blsAutoPath] === 1, 'the page navigated by itself');
+    assert(hits[blsAutoPath] === before + 1, 'the page navigated by itself');
   });
 
   await check('auto: Stop in the popup is respected on that page, even after a reload', async () => {
-    const p = await openPopup(BLS_AUTO_URL);
-    await p.click('#stop');
-    await p.close();
+    await fresh(AUTO);
+    const auto = await open(BLS_AUTO_URL, 'bls-auto');
+    await waitBadge(auto, 'available', 15000);
+    await stopWatching(BLS_AUTO_URL);
     await auto.waitForFunction(() => /stopped/.test(document.getElementById('rdv-maroc-badge').textContent));
     await auto.reload();
     await auto.waitForSelector('#rdv-maroc-badge');
@@ -463,15 +589,10 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert(!settings.watching && /stopped/.test((await badgeState(auto)).text), JSON.stringify(await badgeState(auto)));
     assert(!(await auto.$('.rdv-slot-day')), 'highlight left behind while stopped');
   });
-  await auto.close();
-
-  const VFS_AUTO_URL = 'https://visa.vfsglobal.com/mar/fr/ita/appointment';
-  const vfsAutoPath = new URL(VFS_AUTO_URL).pathname;
-  scenario[vfsAutoPath] = 'vfs-none';
-  const vauto = await context.newPage();
-  await vauto.goto(VFS_AUTO_URL);
 
   await check('auto: a VFS calendar rendered after load starts watching by itself', async () => {
+    await fresh(AUTO);
+    const vauto = await open(VFS_AUTO_URL, 'vfs-none');
     await waitBadge(vauto, 'none', 15000);
     const s = await waitStatus('none');
     assert(s.settings.watching && s.settings.autoStarted, 'not watching');
@@ -479,6 +600,10 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   });
 
   await check('auto: a verification page pauses, and watching resumes by itself once the calendar is back', async () => {
+    await fresh(AUTO);
+    const vfsAutoPath = new URL(VFS_AUTO_URL).pathname;
+    const vauto = await open(VFS_AUTO_URL, 'vfs-none');
+    await waitBadge(vauto, 'none', 15000);
     scenario[vfsAutoPath] = 'cf-challenge';
     await vauto.reload();
     await waitBadge(vauto, 'captcha');
@@ -493,32 +618,16 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert((await notifications()).length === 1, `notifications: ${await notifications()}`);
     assert((await vauto.$$('.rdv-slot-day')).length === 1, 'free day not highlighted');
   });
-  await vauto.close();
 
   // ---------- dashboard: applications, booking capture, documents ----------
-  await sw.evaluate(() => chrome.storage.local.set({ applications: [], settings: { autoStart: false, auto: false, sound: false }, status: null, lastHit: null, bookedSeen: [] }));
-  const dash = await context.newPage();
-  await dash.goto(`chrome-extension://${extId}/dashboard.html`);
-  await dash.waitForSelector('#rows', { state: 'attached' });
-  let appId;
-
   await check('dashboard: empty state, then a new application is created, filled and linked to the watcher', async () => {
+    await fresh();
+    const dash = await openDashboard();
     assert(await dash.isVisible('#empty'), 'empty state not shown');
-    await dash.click('#newApp');
-    await dash.waitForSelector('#drawer:not(.hidden) [data-key="surname"]');
-    await dash.fill('[data-key="givenName"]', 'Yahya');
-    await dash.fill('[data-key="surname"]', 'El Amrani');
-    await dash.fill('[data-key="passport"]', 'XB1234567');
-    await dash.fill('[data-key="birthDate"]', '1994-03-07');
-    await dash.selectOption('[data-key="destinationId"]', 'spain');
-    await dash.selectOption('[data-key="centre"]', 'Rabat');
-    await dash.click('#editBtn');                     // Done
-    await dash.waitForFunction(() => document.getElementById('pName').textContent === 'Yahya El Amrani');
+    const appId = await createApp(dash);
     const { applications, settings } = await storage();
-    assert(applications.length === 1, `${applications.length} applications`);
     const a = applications[0];
-    appId = a.id;
-    assert(a.applicant.passport === 'XB1234567' && a.centre === 'Rabat' && a.destinationId === 'spain', JSON.stringify(a));
+    assert(a.id === appId && a.applicant.passport === 'XB1234567' && a.centre === 'Rabat' && a.destinationId === 'spain', JSON.stringify(a));
     assert(settings.activeAppId === a.id, 'first application should be linked to the watcher');
     const row = await dash.textContent('#rows tr');
     assert(/#1001/.test(row) && /Yahya El Amrani/.test(row) && /Spain/.test(row) && /Rabat/.test(row), row);
@@ -528,16 +637,12 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   });
 
   await check('dashboard: the portal confirmation page books the linked application automatically', async () => {
+    await fresh();
+    const dash = await openDashboard();
+    const appId = await createApp(dash);
     await clearNotifications();
-    const confirmUrl = 'https://www.blsspainmorocco.com/MAR/appointment/confirmation';
-    scenario[new URL(confirmUrl).pathname] = 'bls-booked';
-    const conf = await context.newPage();
-    await conf.goto(confirmUrl);
-    await waitBadge(conf, 'booked', 10000);
-    let a;
-    const end = Date.now() + 5000;
-    do { a = (await storage()).applications.find(x => x.id === appId); if (a.status === 'booked') break; await conf.waitForTimeout(100); } while (Date.now() < end);
-    assert(a.status === 'booked', `status ${a.status}`);
+    const conf = await bookViaPortal(appId);
+    const a = (await storage()).applications.find(x => x.id === appId);
     assert(a.appointment.date === '2026-11-12' && a.appointment.time === '09:30' && a.appointment.reference === 'BLS/RBA/2611/00123', JSON.stringify(a.appointment));
     assert(a.history[0].type === 'booked', JSON.stringify(a.history[0]));
     assert((await notifications()).some(id => id.startsWith('rdv-booked-')), 'no booked notification');
@@ -547,11 +652,15 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     await conf.waitForTimeout(800);
     const again = (await storage()).applications.find(x => x.id === appId);
     assert(again.history.filter(h => h.type === 'booked').length === 1, 'booking recorded twice');
-    await conf.close();
   });
 
   await check('dashboard: shows the booking, its details and an .ics for the calendar', async () => {
-    await dash.waitForFunction(() => /Booked/.test(document.getElementById('sBooked').closest('.stat').textContent) && document.getElementById('sBooked').textContent === '1');
+    await fresh();
+    const dash = await openDashboard();
+    const appId = await createApp(dash);
+    await bookViaPortal(appId);
+    await dash.bringToFront();
+    await dash.waitForFunction(() => document.getElementById('sBooked').textContent === '1');
     const row = await dash.textContent('#rows tr');
     assert(/Booked/.test(row) && /2026/.test(row) && /09:30/.test(row), row);
     await dash.click('#dTabs [data-t="appt"]');
@@ -566,6 +675,9 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   });
 
   await check('dashboard: documents are stored in the browser, previewed and deleted', async () => {
+    await fresh();
+    const dash = await openDashboard();
+    await createApp(dash);
     await dash.click('#dTabs [data-t="docs"]');
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
     await dash.setInputFiles('#fileIn', { name: 'passport-scan.png', mimeType: 'image/png', buffer: png });
@@ -581,15 +693,17 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   });
 
   await check('popup: lists the application and shows the booked appointment', async () => {
+    await fresh();
+    const dash = await openDashboard();
+    const appId = await createApp(dash);
+    await bookViaPortal(appId);
     const p = await openPopup();
     await p.waitForFunction(() => !document.getElementById('booked').classList.contains('hidden'));
     const txt = await p.textContent('#bookedText');
     assert(/Yahya El Amrani/.test(txt) && /2026-11-12/.test(txt) && /BLS\/RBA\/2611\/00123/.test(txt), txt);
     const opts = await p.$$eval('#activeApp option', os => os.map(o => o.textContent));
     assert(opts.some(o => /#1001 Yahya El Amrani · Spain ✓/.test(o)), opts.join(' | '));
-    await p.close();
   });
-  await dash.close();
 
   await context.close();
   fs.rmSync(userDataDir, { recursive: true, force: true });
