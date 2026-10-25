@@ -399,7 +399,7 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert(hits[blsPath] === before + 1, `expected exactly one reload, got ${hits[blsPath] - before}`);
     assert(waited >= 59.5, `reloaded after only ${waited.toFixed(1)} s`);
     await waitBadge(bls, 'available');
-    await bls.waitForSelector('#rdv-maroc-banner');
+    await bls.waitForSelector('#rdv-maroc-slot');
     const { lastHit } = await storage();
     assert(lastHit && lastHit.where === 'Spain · Rabat · Tourism · Tourisme', JSON.stringify(lastHit));
     assert((await notifications()).length === 1, `notifications: ${await notifications()}`);
@@ -421,7 +421,7 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert(secs >= 59 && secs <= 71, `next refresh in ${secs.toFixed(1)} s`);
     assert(s.lastHit.at === lastHit.at, 're-alerted for the same slot');
     assert((await notifications()).length === 1, `notifications after refresh: ${await notifications()}`);
-    assert(!(await bls.$('#rdv-maroc-banner')), 'banner shown again for the same slot');
+    assert(!(await bls.$('#rdv-maroc-slot')), 'slot pop-up shown again for the same slot');
   });
 
   await check('slot disappears then reappears → alerts again', async () => {
@@ -567,6 +567,91 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     const s = await storage();
     assert(s.lastHit.at === lastHit.at, 're-alerted after refresh');
     assert((await notifications()).length === 1, `notifications: ${await notifications()}`);
+  });
+
+  // ---------- in-page HUD, toasts, slot pop-up, tab title ----------
+  await check('HUD: countdown ring, live details, toasts and a tab-title countdown while watching; Pause from the HUD', async () => {
+    await fresh();
+    const bls = await open(BLS_URL, 'bls-none');
+    await startWatching(BLS_URL);
+    await waitBadge(bls, 'none');
+    await bls.waitForFunction(() => /^● \d+s – BLS Spain/.test(document.title));
+    assert(await bls.$('#rdv-maroc-badge .rdv-ring.rdv-on'), 'countdown ring not shown');
+    const ringText = await bls.textContent('#rdv-maroc-badge .rdv-ring text');
+    assert(/^\d+$/.test(ringText) && +ringText <= 70 && +ringText >= 50, `ring shows "${ringText}"`);
+    const toasts = await bls.$$eval('#rdv-maroc-toasts .rdv-toast', els => els.map(e => e.textContent));
+    assert(toasts.some(t => /Watching/.test(t)), `toasts: ${toasts.join(' | ')}`);
+    await bls.click('#rdv-maroc-badge .rdv-more');
+    await bls.waitForFunction(() => /\d+ checks?/.test(document.querySelector('#rdv-maroc-badge .rdv-meta').textContent));
+    assert(/Spain · Rabat/.test(await bls.textContent('#rdv-maroc-badge .rdv-meta')), await bls.textContent('#rdv-maroc-badge .rdv-meta'));
+    await bls.click('#rdv-maroc-badge [data-act="pause"]');
+    await bls.waitForFunction(() => /press Start/.test(document.querySelector('#rdv-maroc-badge .rdv-sub').textContent));
+    const s = await storage();
+    assert(!s.settings.watching && !s.nextAt, 'Pause from the HUD was ignored');
+    assert(!/^● /.test(await bls.title()), `title prefix not restored: ${await bls.title()}`);
+    await bls.click('#rdv-maroc-badge [data-act="resume"]');
+    await waitBadge(bls, 'none');
+    assert((await storage()).settings.watching, 'Resume from the HUD was ignored');
+  });
+
+  await check('slot pop-up: dates, timer, page flash, title, "Show me the day" scrolls to the green day, applicant details ready to copy', async () => {
+    await fresh();
+    await sw.evaluate((m) => chrome.storage.local.set({
+      applications: [{ id: 'app-1', num: 1001, createdAt: Date.now(), status: 'watching', destinationId: 'italy', centre: 'Rabat', category: 'Tourism · Tourisme',
+        applicant: { givenName: 'Yahya', surname: 'El Amrani', passport: 'XB1234567', birthDate: '1994-03-07' }, history: [] }],
+      settings: { ...m, activeAppId: 'app-1' },
+    }), MANUAL);
+    const vfs = await open(VFS_URL, 'vfs-slot');
+    await vfs.waitForSelector('#rdv-maroc-badge');
+    await startWatching(VFS_URL, { destination: 'italy', centre: 'Rabat' });
+    await waitBadge(vfs, 'available', 8000);
+    await vfs.waitForSelector('#rdv-maroc-slot');
+    const pop = await vfs.textContent('#rdv-maroc-slot');
+    assert(/SLOT AVAILABLE/.test(pop) && /2026-11-12/.test(pop) && /Italy · Rabat/.test(pop), pop);
+    assert(/^🟢 SLOT! – /.test(await vfs.title()), await vfs.title());
+    assert(await vfs.$('#rdv-maroc-flash'), 'no page flash');
+    await vfs.waitForFunction(() => /seen \d+s ago/.test(document.querySelector('#rdv-maroc-slot .rdv-s-ago').textContent), null, { timeout: 4000 });
+    const copies = await vfs.$$eval('#rdv-maroc-slot .rdv-copy', els => els.map(e => e.dataset.copy));
+    assert(copies.includes('XB1234567') && copies.includes('07/03/1994') && copies.includes('El Amrani'), `copy strip: ${copies}`);
+    // Push the calendar far down, then ask to be shown the day: it scrolls into view and flashes.
+    await vfs.evaluate(() => { document.querySelector('mat-calendar').style.marginTop = '2400px'; window.scrollTo(0, 0); });
+    await vfs.click('#rdv-maroc-slot [data-act="show"]');
+    await vfs.waitForFunction(() => {
+      const c = document.querySelector('.rdv-slot-day');
+      if (!c) return false;
+      const r = c.getBoundingClientRect();
+      return r.top >= 0 && r.bottom <= innerHeight && c.classList.contains('rdv-flash');
+    }, null, { timeout: 5000 });
+    assert((await vfs.$$('.rdv-slot-day')).length === 1, 'the free day lost its outline');
+    await vfs.click('#rdv-maroc-slot [data-act="dismiss"]');
+    await vfs.waitForFunction(() => !document.getElementById('rdv-maroc-slot'));
+    // Same slot after a refresh: no second pop-up. Slot gone: a toast says so.
+    await vfs.reload();
+    await waitBadge(vfs, 'available', 8000);
+    await vfs.waitForTimeout(2500);
+    assert(!(await vfs.$('#rdv-maroc-slot')), 'the same slot popped up again after a refresh');
+    scenario[new URL(VFS_URL).pathname] = 'vfs-none';
+    await vfs.reload();
+    await waitBadge(vfs, 'none', 8000);
+    await vfs.waitForFunction(() => [...document.querySelectorAll('#rdv-maroc-toasts .rdv-toast')].some(t => /Slot gone/.test(t.textContent)), null, { timeout: 4000 });
+  });
+
+  await check('dashboard: live alert bar, pulsing row and title while a slot is visible; "Go to the portal tab" focuses it', async () => {
+    await fresh();
+    const dash = await openDashboard();
+    const appId = await createApp(dash);
+    const bls = await open(BLS_URL, 'bls-slot');
+    await startWatching(BLS_URL);
+    await waitBadge(bls, 'available');
+    await dash.bringToFront();
+    await dash.waitForFunction(() => !document.getElementById('liveBar').classList.contains('hidden') && /SLOT AVAILABLE/.test(document.getElementById('liveBarText').textContent));
+    assert(/^🟢 SLOT!/.test(await dash.title()), await dash.title());
+    await dash.waitForFunction(id => { const tr = document.querySelector(`#rows tr[data-id="${id}"]`); return tr && tr.classList.contains('live-slot'); }, appId);
+    await dash.click('#close');                       // the detail panel was still open from creating the application
+    await dash.click('#liveBarGo');
+    await dash.waitForTimeout(400);
+    const active = await sw.evaluate(async () => (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0].url);
+    assert(active === BLS_URL, `active tab is ${active}`);
   });
 
   // ---------- autonomous mode: nothing pressed, choices read from the page ----------

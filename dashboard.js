@@ -31,7 +31,7 @@ const load = keys => new Promise(r => chrome.storage.local.get(keys, r));
 const save = obj => new Promise(r => chrome.storage.local.set(obj, r));
 
 // ---------- state ----------
-let apps = [], settings = {}, status = {}, nextAt = 0;
+let apps = [], settings = {}, status = {}, nextAt = 0, lastHit = null;
 let filter = 'all', query = '', selectedId = null, tab = 'detail', editing = false, zoom = 1, viewingDoc = null, manualOpen = false;
 
 const STATE_LABEL = { watching: 'Watching', slot: 'Slot available', paused: 'Paused', booked: 'Booked', idle: 'Not watching' };
@@ -166,7 +166,7 @@ function render() {
   const rows = list.map(a => {
     const st = appState(a);
     const ap = a.appointment;
-    return h('tr', { class: a.id === selectedId ? 'sel' : '', dataset: { id: a.id }, onclick: () => openDrawer(a.id) },
+    return h('tr', { class: `${a.id === selectedId ? 'sel' : ''} ${a.id === linked && st === 'slot' ? 'live-slot' : ''}`.trim(), dataset: { id: a.id }, onclick: () => openDrawer(a.id) },
       h('td', { class: 'idc' }, `#${a.num}`),
       h('td', {}, h('div', { class: 'cell-name' }, avatar(a), fullName(a), a.id === linked ? h('span', { class: 'lnk-star', title: 'Watcher linked to this application' }, icon('star')) : null)),
       h('td', {}, h('div', { class: 'dest' }, flag(a.destinationId), destName(a.destinationId))),
@@ -203,6 +203,28 @@ function renderLive() {
   pill.dataset.state = state;
   $('liveText').textContent = text;
   pill.title = settings.watchTabId != null ? 'Click to open the watched tab' : '';
+
+  // Alert bar + toast on every change of the watcher's state; the tab title says it too.
+  const bar = $('liveBar');
+  const barOn = state === 'available' || state === 'paused';
+  bar.classList.toggle('hidden', !barOn);
+  bar.dataset.state = state;
+  if (state === 'available') {
+    $('liveBarText').textContent = `SLOT AVAILABLE · ${where || 'portal'} – go and book it`;
+    const seen = (lastHit && lastHit.at) || status.at;
+    $('liveBarAgo').textContent = seen ? `seen ${ago(seen)}` : '';
+  } else if (state === 'paused') {
+    $('liveBarText').textContent = text + ' – deal with it in the portal tab, watching resumes by itself';
+    $('liveBarAgo').textContent = status.at ? ago(status.at) : '';
+  }
+  const prefix = { available: '🟢 SLOT!', paused: '⚠ Needs you', booked: '✅ Booked', watching: '● Watching' }[state] || '';
+  const full = `${prefix ? `${prefix} – ` : ''}RDV Maroc · Applications`;
+  if (document.title !== full) document.title = full;
+  if (renderLive.last !== undefined && renderLive.last !== state) {
+    const msg = { available: `Slot available · ${where}`, paused: text, booked: 'Appointment booked ✓', watching: `Watching ${where}`.trim(), idle: 'Watcher idle' }[state];
+    if (msg) toast(msg);
+  }
+  renderLive.last = state;
 }
 
 // ---------- drawer ----------
@@ -544,11 +566,12 @@ async function addFiles(files) {
 
 // ---------- wiring ----------
 async function refresh() {
-  const s = await load(['applications', 'settings', 'status', 'nextAt']);
+  const s = await load(['applications', 'settings', 'status', 'nextAt', 'lastHit']);
   apps = s.applications || [];
   settings = s.settings || {};
   status = s.status || {};
   nextAt = s.nextAt || 0;
+  lastHit = s.lastHit || null;
 }
 
 async function init() {
@@ -565,6 +588,7 @@ async function init() {
   $('railExport').onclick = () => download(`rdv-maroc-backup-${new Date().toISOString().slice(0, 10)}.json`,
     new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), applications: apps, settings }, null, 2)], { type: 'application/json' }));
   $('livePill').onclick = focusWatchedTab;
+  $('liveBarGo').onclick = async () => { if (!(await focusWatchedTab())) toast('The watched tab is closed'); };
 
   $('close').onclick = closeDrawer;
   $('scrim').onclick = closeDrawer;
@@ -603,7 +627,7 @@ async function init() {
   $('zOut').onclick = () => setZoom(zoom - 0.25);
 
   chrome.storage.onChanged.addListener(async (changes) => {
-    if (!['applications', 'settings', 'status', 'nextAt'].some(k => k in changes)) return;
+    if (!['applications', 'settings', 'status', 'nextAt', 'lastHit'].some(k => k in changes)) return;
     if (writing && Object.keys(changes).every(k => k === 'applications')) return;   // our own save
     await refresh();
     render();

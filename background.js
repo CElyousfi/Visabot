@@ -139,6 +139,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       return;
     }
     if (msg.type === 'setBadge') { badge(msg.text || '', msg.color); reply({ ok: true }); return; }
+    if (msg.type === 'openDashboard') { chrome.runtime.openOptionsPage(); reply({ ok: true }); return; }
     reply({ ok: false });
   })();
   return true;

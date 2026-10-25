@@ -292,21 +292,210 @@
     };
   }
 
-  // ---------- status UI (small badge in the page) ----------
+  // ---------- in-page HUD: live state, countdown ring, toasts, slot pop-up, tab title ----------
+  // Everything here lives outside <body> (so our own updates never trigger the page observer) and
+  // only acts on the extension: it never clicks, fills or submits anything on the portal.
+  const hud = { lastState: null, checks: 0, slotsSeen: 0, lastCheckAt: 0, baseTitle: document.title, lastFull: document.title, expanded: false };
+  const RING_LEN = 2 * Math.PI * 15.5;
   function ensureBadge() {
     let b = $('#rdv-maroc-badge');
     if (b) return b;
     b = document.createElement('div');
     b.id = 'rdv-maroc-badge';
-    b.innerHTML = `<span class="rdv-dot"></span><span class="rdv-text">RDV Maroc</span><span class="rdv-sub"></span>`;
+    b.innerHTML = `
+      <div class="rdv-main">
+        <span class="rdv-dot"></span>
+        <svg class="rdv-ring" viewBox="0 0 36 36" aria-hidden="true"><circle class="rdv-ring-bg" cx="18" cy="18" r="15.5"/><circle class="rdv-ring-fg" cx="18" cy="18" r="15.5"/><text x="18" y="22.5" text-anchor="middle"></text></svg>
+        <span class="rdv-text">RDV Maroc</span><span class="rdv-sub"></span>
+        <button type="button" class="rdv-more" title="Details">▾</button>
+      </div>
+      <div class="rdv-details">
+        <div class="rdv-meta"></div>
+        <div class="rdv-actions">
+          <button type="button" data-act="check">Check now</button>
+          <button type="button" data-act="pause">Pause</button>
+          <button type="button" data-act="resume">Resume</button>
+          <button type="button" data-act="mute">Stop sound</button>
+          <button type="button" data-act="dash">Dashboard</button>
+        </div>
+      </div>`;
+    b.querySelector('.rdv-more').onclick = () => { hud.expanded = !hud.expanded; b.classList.toggle('rdv-open', hud.expanded); renderMeta(); };
+    b.querySelector('.rdv-actions').onclick = e => { const act = e.target.dataset && e.target.dataset.act; if (act) hudAction(act); };
     document.documentElement.appendChild(b);
     return b;
   }
+  const TOASTS = {
+    none: (prev) => prev === 'available' ? ['warn', 'Slot gone – still watching'] : ['info', 'Watching · no slots yet'],
+    unknown: () => ['info', 'Watching'],
+    captcha: () => ['warn', 'Verification needed – your turn, I resume after'],
+    login: () => ['warn', 'Logged out – log in again, I resume after'],
+    booked: () => ['ok', 'Appointment booked ✓'],
+  };
   function setBadge(state, text, sub) {
     const b = ensureBadge();
     b.dataset.state = state;
+    b.classList.toggle('rdv-watching', !!(settings && settings.watching));
     b.querySelector('.rdv-text').textContent = text;
     b.querySelector('.rdv-sub').textContent = sub || '';
+    if (state !== hud.lastState) {
+      const watching = settings && settings.watching;
+      if (watching && TOASTS[state] && (state !== 'unknown' || /Watching/.test(text))) {
+        const [kind, msg] = TOASTS[state](hud.lastState);
+        toast(kind, state === 'unknown' && sub === 'started automatically' ? 'Watching started by itself' : msg);
+      } else if (TOASTS[state] && state !== 'none' && state !== 'unknown') {
+        const [kind, msg] = TOASTS[state](hud.lastState);
+        toast(kind, msg);
+      }
+      hud.lastState = state;
+    }
+    if (state === 'available') setTitle('🟢 SLOT!');
+    else if (state === 'captcha' || state === 'login') setTitle('⚠ Needs you');
+    else if (state === 'booked') setTitle('✅ Booked');
+    else if (!(settings && settings.watching)) setTitle('');
+    else if (!timer) setTitle('● Watching');
+    renderMeta();
+  }
+  function renderMeta() {
+    const b = $('#rdv-maroc-badge');
+    if (!b || !hud.expanded) return;
+    const who = hud.app ? `#${hud.app.num} ${[hud.app.applicant && hud.app.applicant.givenName, hud.app.applicant && hud.app.applicant.surname].filter(Boolean).join(' ') || ''}`.trim() : '';
+    const bits = [
+      [who, describeTarget()].filter(Boolean).join(' · '),
+      `${hud.checks} check${hud.checks === 1 ? '' : 's'}${hud.lastCheckAt ? ` · last ${new Date(hud.lastCheckAt).toLocaleTimeString()}` : ''}`,
+      settings && settings.autoRefresh ? `refresh every ${Math.max(D.MIN_INTERVAL, Number(settings.interval) || 90)} s` : 'auto-refresh off',
+      hud.slotsSeen ? `${hud.slotsSeen} slot alert${hud.slotsSeen === 1 ? '' : 's'} this session` : '',
+    ].filter(Boolean);
+    b.querySelector('.rdv-meta').textContent = bits.join('\n');
+  }
+  function setRing(left, total) {
+    const b = $('#rdv-maroc-badge');
+    if (!b) return;
+    const ring = b.querySelector('.rdv-ring');
+    if (left == null) { ring.classList.remove('rdv-on'); return; }
+    ring.classList.add('rdv-on');
+    ring.querySelector('.rdv-ring-fg').style.strokeDashoffset = String(RING_LEN * (1 - Math.max(0, Math.min(1, left / total))));
+    ring.querySelector('text').textContent = left;
+  }
+  /** Tab title prefix so the state shows from any other tab; the page's own title stays after it. */
+  function setTitle(prefix) {
+    if (document.title !== hud.lastFull) hud.baseTitle = document.title;   // the page changed its title
+    const full = prefix ? `${prefix} – ${hud.baseTitle}` : hud.baseTitle;
+    hud.lastFull = full;
+    if (document.title !== full) document.title = full;
+  }
+  function toast(kind, text, { sticky = false, ms = 4500 } = {}) {
+    let wrap = $('#rdv-maroc-toasts');
+    if (!wrap) { wrap = document.createElement('div'); wrap.id = 'rdv-maroc-toasts'; document.documentElement.appendChild(wrap); }
+    const t = document.createElement('div');
+    t.className = `rdv-toast rdv-${kind}`;
+    t.textContent = text;
+    wrap.prepend(t);
+    while (wrap.children.length > 4) wrap.lastChild.remove();
+    if (!sticky) setTimeout(() => { t.classList.add('rdv-out'); setTimeout(() => t.remove(), 300); }, ms);
+    return t;
+  }
+  async function hudAction(act) {
+    if (act === 'check') { settings = await readSettings(); toast('info', 'Checking…', { ms: 1500 }); await evaluate('manual'); }
+    else if (act === 'pause') { await patchSettings({ watching: false, manualStopUrl: location.href, autoStarted: false }); toast('info', 'Paused – press Resume or Start'); requestStart(); }
+    else if (act === 'resume') { lastFingerprint = null; lastAlertAt = 0; await saveAlertState(); await patchSettings({ watching: true, watchTabId: myTabId, manualStopUrl: '', autoStarted: false }); requestStart(); }
+    else if (act === 'mute') { stopRinging(); if (audio) { try { audio.pause(); } catch (e) {} } toast('info', 'Sound stopped for this slot', { ms: 2500 }); }
+    else if (act === 'dash') send({ type: 'openDashboard' });
+  }
+
+  /** The dashboard application this tab's alerts are filed under (for the copy strip). */
+  async function linkedApplication() {
+    const { applications = [] } = await load('applications');
+    const app = applications.find(a => a.id === settings.activeAppId)
+      || applications.find(a => a.destinationId && a.destinationId === settings.destinationId && (!settings.centre || !a.centre || a.centre === settings.centre) && a.status !== 'booked')
+      || null;
+    hud.app = app;
+    return app;
+  }
+  const ddmmyyyy = iso => /^\d{4}-\d{2}-\d{2}$/.test(iso || '') ? iso.split('-').reverse().join('/') : (iso || '');
+
+  // Sound repeats while the slot pop-up is up, so a slot found while you are away is not missed.
+  let ringTimer = null, ringCount = 0;
+  function startRinging() {
+    stopRinging();
+    if (!settings || !settings.sound) return;
+    ringTimer = setInterval(() => { if (++ringCount > 4 || !$('#rdv-maroc-slot')) return stopRinging(); playSound(); }, 30000);
+  }
+  function stopRinging() { clearInterval(ringTimer); ringTimer = null; ringCount = 0; }
+
+  function flashPage() {
+    let f = $('#rdv-maroc-flash');
+    if (!f) { f = document.createElement('div'); f.id = 'rdv-maroc-flash'; document.documentElement.appendChild(f); }
+    clearTimeout(flashPage.t);
+    flashPage.t = setTimeout(() => f.remove(), 8000);
+  }
+  /** Scroll to a free day and flash it. We point; the click is yours. */
+  function showDay(dateIso) {
+    const cells = collectDayCells(watchedArea()).cells;
+    let target = cells[0] || collectSlotOptions(watchedArea()).filled[0];
+    if (dateIso && cells.length) { const day = String(+dateIso.slice(8)); target = cells.find(c => c.textContent.trim() === day) || target; }
+    if (!target) return;
+    try { target.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {}
+    target.classList.add('rdv-flash');
+    setTimeout(() => target.classList.remove('rdv-flash'), 2400);
+  }
+  function closeSlotPopup() {
+    const el = $('#rdv-maroc-slot');
+    if (el) { clearInterval(el._tick); el.remove(); }
+    stopRinging();
+  }
+  async function showSlotPopup(res, snap, where, fp) {
+    closeSlotPopup();
+    const el = document.createElement('div');
+    el.id = 'rdv-maroc-slot';
+    el.dataset.fp = fp;
+    el.innerHTML = `
+      <div class="rdv-s-head"><span class="rdv-s-live"></span><b>SLOT AVAILABLE</b><span class="rdv-s-ago">just now</span><button type="button" class="rdv-s-x" data-act="dismiss" title="Dismiss">×</button></div>
+      <div class="rdv-s-where"></div>
+      <div class="rdv-s-dates"></div>
+      <div class="rdv-s-steps">1. Click a green day → 2. choose the time → 3. confirm. I never click for you.</div>
+      <div class="rdv-s-copy"></div>
+      <div class="rdv-s-actions"><button type="button" class="rdv-primary" data-act="show">Show me the day</button><button type="button" data-act="mute">Stop sound</button><button type="button" data-act="dismiss">Dismiss</button></div>`;
+    el.querySelector('.rdv-s-where').textContent = where;
+    const dd = el.querySelector('.rdv-s-dates');
+    const dates = res.dates.slice(0, 8);
+    if (dates.length) {
+      for (const d of dates) { const c = document.createElement('button'); c.type = 'button'; c.className = 'rdv-chip'; c.textContent = d; c.title = 'Show this day'; c.onclick = () => showDay(d); dd.appendChild(c); }
+    } else {
+      dd.textContent = `${snap.enabledDays} free day(s) outlined in green` + (snap.optionCount ? ` · ${snap.optionCount} time slot(s) listed` : '');
+    }
+    const app = await linkedApplication();
+    const strip = el.querySelector('.rdv-s-copy');
+    const ap = app && app.applicant;
+    if (ap && Object.keys(ap).length) {
+      const fields = [['Passport', ap.passport], ['Surname', ap.surname], ['Given name', ap.givenName], ['Birth date', ddmmyyyy(ap.birthDate)], ['Passport expiry', ddmmyyyy(ap.passportExpiry)], ['Phone', ap.phone], ['Email', ap.email]].filter(f => f[1]);
+      if (fields.length) {
+        const lab = document.createElement('span'); lab.className = 'rdv-s-lab'; lab.textContent = 'For the form, one click:'; strip.appendChild(lab);
+        for (const [k, v] of fields) {
+          const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'rdv-copy'; btn.dataset.copy = v; btn.textContent = `${k}: ${v}`;
+          btn.onclick = async () => { try { await navigator.clipboard.writeText(v); } catch (e) {} btn.classList.add('rdv-done'); setTimeout(() => btn.classList.remove('rdv-done'), 1200); };
+          strip.appendChild(btn);
+        }
+      }
+    } else if (app && app.applicantLocked) {
+      strip.textContent = 'Details are locked with your passphrase: open the dashboard to copy them.';
+    } else {
+      strip.textContent = 'Tip: add your passport details in the dashboard and they appear here to copy.';
+    }
+    el.addEventListener('click', e => {
+      const act = e.target.dataset && e.target.dataset.act;
+      if (act === 'show') showDay(dates[0]);
+      else if (act === 'mute') hudAction('mute');
+      else if (act === 'dismiss') closeSlotPopup();
+    });
+    const shownAt = Date.now();
+    el._tick = setInterval(() => {
+      const s = Math.round((Date.now() - shownAt) / 1000);
+      const ago = el.querySelector('.rdv-s-ago');
+      if (ago) ago.textContent = s < 60 ? `seen ${s}s ago` : `seen ${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s ago`;
+    }, 1000);
+    document.documentElement.appendChild(el);
+    flashPage();
+    startRinging();
   }
 
   function banner(title, body) {
@@ -346,9 +535,12 @@
     const fp = D.hash(`${res.state}|${res.dates.join(',')}|${snap.enabledDays}|${snap.optionCount}`);
     const label = { captcha: 'Needs you', login: 'Logged out', available: 'SLOT!', none: 'No slots', unknown: 'Watching' }[res.state];
     if (res.state !== 'login') { loginSince = 0; clearTimeout(loginTimer); }
+    hud.checks++; hud.lastCheckAt = Date.now();
+    if (!hud.app) linkedApplication();
 
     if (res.state === 'captcha') {
       stopTimer();
+      closeSlotPopup();
       highlightSlots(document.body, false);
       setBadge('captcha', 'Needs you', 'Solve the verification; I resume when the calendar is back');
       banner('RDV Maroc – your turn', 'The page is asking for a human check. Solve it yourself; I never fill these in. I start watching again as soon as the calendar shows.');
@@ -370,6 +562,7 @@
       }
       loginSince = 0;
       stopTimer();
+      closeSlotPopup();
       highlightSlots(document.body, false);
       setBadge('login', 'Logged out', 'Log in again and open the calendar; I resume by myself');
       banner('RDV Maroc – session ended', 'The portal sent you back to the login page. Log in again (I never store your password) and open the calendar; watching resumes on its own.');
@@ -387,10 +580,12 @@
       if (changed || due) {
         lastFingerprint = fp;
         lastAlertAt = Date.now();
+        hud.slotsSeen++;
         await saveAlertState();
         const where = describeTarget();
         const datesTxt = res.dates.length ? `Dates seen: ${res.dates.slice(0, 6).join(', ')}` : res.reasons.join(' · ');
-        banner('🎉 Slot detected – book it now', `${where}\n${datesTxt}\nThe free day(s) are outlined in green: click one, choose the time, confirm.`);
+        toast('ok', `SLOT AVAILABLE · ${where}`, { sticky: true });
+        showSlotPopup(res, snap, where, fp);
         const r = await send({ type: 'slotFound', title: `RDV Maroc: slot at ${where}`, body: datesTxt, dates: res.dates, url: location.href, tabId: myTabId, sound: !!settings.sound });
         if (!r || !r.soundPlayed) playSound();
         await store({ lastHit: { at: Date.now(), where, dates: res.dates, reasons: res.reasons, url: location.href } });
@@ -401,8 +596,12 @@
     } else {
       // Only a page that says "no slots" clears the last alert. 'unknown' is usually an SPA calendar
       // that has not rendered yet after a refresh; forgetting the slot then would re-alert it.
-      if (res.state === 'none' && lastFingerprint) { lastFingerprint = null; await saveAlertState(); }
+      if (res.state === 'none' && lastFingerprint) {
+        lastFingerprint = null; await saveAlertState();
+        if (hud.lastState !== 'available') toast('warn', 'Slot gone – still watching');   // the transition happened across a refresh
+      }
       highlightSlots(document.body, false);
+      closeSlotPopup();
       setBadge(res.state, label, trigger === 'reload' ? 'checked after refresh' : 'checked');
     }
 
@@ -424,6 +623,7 @@
     timer = countdown = null;
     nextAt = 0;
     store({ nextAt: 0 });
+    setRing(null);
   }
 
   function scheduleReload() {
@@ -432,10 +632,17 @@
     const secs = D.reloadDelaySeconds(settings.interval, Math.random());
     nextAt = Date.now() + secs * 1000;
     store({ nextAt });
+    setRing(secs, secs);
+    let warned = false;
     countdown = setInterval(() => {
       const left = Math.max(0, Math.round((nextAt - Date.now()) / 1000));
       const b = $('#rdv-maroc-badge');
-      if (b && b.dataset.state !== 'available') b.querySelector('.rdv-sub').textContent = `next refresh in ${left}s`;
+      setRing(left, secs);
+      if (b && b.dataset.state !== 'available') {
+        b.querySelector('.rdv-sub').textContent = `next refresh in ${left}s`;
+        setTitle(`● ${left}s`);
+      }
+      if (left <= 3 && !warned) { warned = true; toast('info', 'Refreshing in 3 s…', { ms: 3200 }); }
     }, 1000);
     timer = setTimeout(async () => {
       if (!settings.watching) return;
@@ -468,7 +675,7 @@
   const CALENDAR_CONTAINER = '.ui-datepicker, mat-calendar, .mat-calendar, .k-calendar, .flatpickr-calendar, [class*="calendar" i], [class*="datepicker" i]';
   /** Clicking a single day (the natural thing to do) should select the whole calendar around it. */
   function pickTarget(el) {
-    if (!el || (el.id && el.id.startsWith('rdv-maroc'))) return null;
+    if (!el || !(el instanceof Element) || el.closest('[id^="rdv-maroc"]')) return null;
     let n = el, cells = 0;
     while (n && n !== document.body && cells < 7) { cells = collectDayCells(n).total; if (cells < 7) n = n.parentElement; }
     if (!n || n === document.body) return el;              // not inside a calendar: keep what was clicked
@@ -554,6 +761,7 @@
     await patchSettings({ watching: true, watchTabId: myTabId, autoStarted: true, manualStopUrl: '' });
     await store({ status: { state: 'unknown', at: Date.now(), tabId: myTabId, url: location.href } });
     await applyPageContext();
+    hud.lastState = null;
     setBadge('unknown', 'Watching', 'started automatically');
     await loadAlertState();
     await evaluate('auto');
@@ -570,6 +778,7 @@
     }
     if (!settings.watching) {
       stopTimer();
+      closeSlotPopup();
       highlightSlots(document.body, false);
       startObserver();
       await tryAutoStart();

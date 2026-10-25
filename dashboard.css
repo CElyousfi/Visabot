@@ -234,3 +234,17 @@ button { font: inherit; color: inherit; }
   .search.top, .live { display: none; }
   .kv { grid-template-columns: 130px 1fr; }
 }
+
+/* ---------- live alert bar: slot visible or watcher paused ---------- */
+.livebar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 12px; font-weight: 600; border: 1px solid var(--line); background: var(--surface); animation: slide-down .2s ease-out; }
+@keyframes slide-down { from { opacity: 0; transform: translateY(-8px); } }
+.livebar .livebar-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--faint); flex: none; }
+.livebar[data-state="available"] { background: linear-gradient(90deg, #dcfce7, #ecfdf5); border-color: #86efac; color: #065f46; box-shadow: 0 0 0 4px rgba(21,163,90,.12); }
+.livebar[data-state="available"] .livebar-dot { background: var(--green); animation: pulse 1s infinite; }
+.livebar[data-state="paused"] { background: var(--amber-soft); border-color: #f5dfae; color: #7c4a03; }
+.livebar[data-state="paused"] .livebar-dot { background: var(--amber); }
+.livebar .livebar-ago { color: inherit; opacity: .7; font-weight: 500; font-size: 12px; min-width: 110px; text-align: right; font-variant-numeric: tabular-nums; }
+.livebar .btn { margin-left: auto; }
+.livebar[data-state="available"] .btn { background: var(--green); border-color: var(--green); color: #fff; }
+.grid tbody tr.live-slot td { background: #f0fdf4; animation: row-pulse 1.4s ease-in-out infinite; }
+@keyframes row-pulse { 50% { background: #dcfce7; } }

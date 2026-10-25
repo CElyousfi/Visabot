@@ -1,10 +1,13 @@
+/* ---------- HUD (bottom-right): state, countdown ring, details, quick actions ---------- */
 #rdv-maroc-badge {
   position: fixed; right: 16px; bottom: 16px; z-index: 2147483646;
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 12px; border-radius: 999px;
-  background: #111827; color: #f9fafb; font: 13px/1.2 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-  box-shadow: 0 6px 20px rgba(0,0,0,.25); pointer-events: none; max-width: 70vw;
+  display: flex; flex-direction: column; gap: 0;
+  border-radius: 16px; background: #111827; color: #f9fafb;
+  font: 13px/1.2 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  box-shadow: 0 6px 20px rgba(0,0,0,.25); max-width: min(420px, 80vw);
 }
+#rdv-maroc-badge * { box-sizing: border-box; font: inherit; }
+#rdv-maroc-badge .rdv-main { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 12px; min-height: 40px; }
 #rdv-maroc-badge .rdv-dot { width: 10px; height: 10px; border-radius: 50%; background: #9ca3af; flex: none; }
 #rdv-maroc-badge[data-state="none"] .rdv-dot { background: #60a5fa; }
 #rdv-maroc-badge[data-state="unknown"] .rdv-dot { background: #a78bfa; }
@@ -12,10 +15,42 @@
 #rdv-maroc-badge[data-state="available"] .rdv-dot { background: #34d399; animation: rdv-pulse 1s infinite; }
 #rdv-maroc-badge[data-state="captcha"] .rdv-dot,
 #rdv-maroc-badge[data-state="login"] .rdv-dot { background: #fbbf24; }
-#rdv-maroc-badge .rdv-text { font-weight: 600; }
-#rdv-maroc-badge .rdv-sub { opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#rdv-maroc-badge[data-state="booked"] { background: #14532d; }
+#rdv-maroc-badge[data-state="booked"] .rdv-dot { background: #4ade80; }
+#rdv-maroc-badge .rdv-text { font-weight: 600; white-space: nowrap; }
+#rdv-maroc-badge .rdv-sub { opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
+#rdv-maroc-badge .rdv-ring { width: 28px; height: 28px; flex: none; display: none; transform: rotate(-90deg); }
+#rdv-maroc-badge .rdv-ring.rdv-on { display: block; }
+#rdv-maroc-badge .rdv-ring circle { fill: none; stroke-width: 3; }
+#rdv-maroc-badge .rdv-ring-bg { stroke: rgba(255,255,255,.18); }
+#rdv-maroc-badge .rdv-ring-fg { stroke: #60a5fa; stroke-dasharray: 97.39; stroke-dashoffset: 0; stroke-linecap: round; transition: stroke-dashoffset .9s linear; }
+#rdv-maroc-badge[data-state="available"] .rdv-ring-fg { stroke: #34d399; }
+#rdv-maroc-badge .rdv-ring text { fill: #f9fafb; font-size: 11px; font-weight: 700; transform: rotate(90deg); transform-origin: 18px 18px; }
+#rdv-maroc-badge .rdv-more { border: 0; background: rgba(255,255,255,.1); color: #f9fafb; width: 22px; height: 22px; border-radius: 6px; cursor: pointer; padding: 0; line-height: 1; }
+#rdv-maroc-badge .rdv-more:hover { background: rgba(255,255,255,.22); }
+#rdv-maroc-badge.rdv-open .rdv-more { transform: rotate(180deg); }
+#rdv-maroc-badge .rdv-details { display: none; padding: 0 12px 10px; border-top: 1px solid rgba(255,255,255,.1); }
+#rdv-maroc-badge.rdv-open .rdv-details { display: block; }
+#rdv-maroc-badge .rdv-meta { white-space: pre-line; opacity: .8; font-size: 12px; padding: 8px 0; }
+#rdv-maroc-badge .rdv-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+#rdv-maroc-badge .rdv-actions button { border: 1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.08); color: #f9fafb; padding: 5px 9px; border-radius: 8px; cursor: pointer; font-size: 12px; }
+#rdv-maroc-badge .rdv-actions button:hover { background: rgba(255,255,255,.18); }
+#rdv-maroc-badge:not(.rdv-watching) [data-act="pause"], #rdv-maroc-badge:not(.rdv-watching) [data-act="check"],
+#rdv-maroc-badge.rdv-watching [data-act="resume"] { display: none; }
 @keyframes rdv-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.5); } }
 
+/* ---------- toasts (top-right): every state change, briefly ---------- */
+#rdv-maroc-toasts { position: fixed; right: 16px; top: 16px; z-index: 2147483646; display: flex; flex-direction: column; gap: 8px; pointer-events: none; max-width: min(360px, 80vw); }
+.rdv-toast {
+  padding: 10px 14px; border-radius: 10px; background: #1f2937; color: #f9fafb; font: 13px/1.3 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  box-shadow: 0 8px 24px rgba(0,0,0,.25); border-left: 4px solid #60a5fa; animation: rdv-in .18s ease-out;
+}
+.rdv-toast.rdv-ok { border-left-color: #34d399; background: #064e3b; font-weight: 600; }
+.rdv-toast.rdv-warn { border-left-color: #fbbf24; background: #78350f; }
+.rdv-toast.rdv-out { opacity: 0; transform: translateX(12px); transition: all .3s; }
+@keyframes rdv-in { from { opacity: 0; transform: translateY(-8px); } }
+
+/* ---------- banner (verification / logged out / booked) ---------- */
 #rdv-maroc-banner {
   position: fixed; left: 50%; top: 16px; transform: translateX(-50%); z-index: 2147483647;
   min-width: 280px; max-width: 90vw; padding: 14px 44px 14px 18px; border-radius: 12px;
@@ -29,11 +64,48 @@
   font-size: 22px; line-height: 1; cursor: pointer; color: #78350f;
 }
 
+/* ---------- slot pop-up: the moment that matters ---------- */
+#rdv-maroc-slot {
+  position: fixed; left: 50%; top: 18px; transform: translateX(-50%); z-index: 2147483647;
+  width: min(560px, 94vw); padding: 16px 18px 14px; border-radius: 16px;
+  background: linear-gradient(160deg, #052e16, #065f46 60%, #047857); color: #ecfdf5;
+  border: 2px solid #34d399; box-shadow: 0 20px 60px rgba(0,0,0,.45), 0 0 0 6px rgba(52,211,153,.25);
+  font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; animation: rdv-slot-in .35s cubic-bezier(.2,.9,.3,1.2);
+}
+#rdv-maroc-slot * { box-sizing: border-box; font: inherit; }
+@keyframes rdv-slot-in { from { opacity: 0; transform: translate(-50%, -24px) scale(.96); } }
+#rdv-maroc-slot .rdv-s-head { display: flex; align-items: center; gap: 10px; font-size: 20px; letter-spacing: .04em; }
+#rdv-maroc-slot .rdv-s-live { width: 12px; height: 12px; border-radius: 50%; background: #34d399; box-shadow: 0 0 0 0 rgba(52,211,153,.7); animation: rdv-live 1s infinite; }
+@keyframes rdv-live { to { box-shadow: 0 0 0 12px rgba(52,211,153,0); } }
+#rdv-maroc-slot .rdv-s-ago { margin-left: auto; font-size: 12px; opacity: .8; font-variant-numeric: tabular-nums; }
+#rdv-maroc-slot .rdv-s-x { border: 0; background: rgba(255,255,255,.12); color: #ecfdf5; width: 28px; height: 28px; border-radius: 8px; cursor: pointer; font-size: 20px; line-height: 1; }
+#rdv-maroc-slot .rdv-s-where { margin-top: 4px; font-weight: 600; font-size: 15px; }
+#rdv-maroc-slot .rdv-s-dates { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 8px; font-size: 15px; }
+#rdv-maroc-slot .rdv-chip { border: 1px solid rgba(255,255,255,.35); background: rgba(255,255,255,.12); color: #fff; padding: 8px 12px; border-radius: 10px; font-size: 18px; font-weight: 700; cursor: pointer; font-variant-numeric: tabular-nums; }
+#rdv-maroc-slot .rdv-chip:hover { background: rgba(255,255,255,.25); }
+#rdv-maroc-slot .rdv-s-steps { font-size: 12.5px; opacity: .85; }
+#rdv-maroc-slot .rdv-s-copy { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; font-size: 12.5px; opacity: .95; }
+#rdv-maroc-slot .rdv-s-lab { opacity: .8; }
+#rdv-maroc-slot .rdv-copy { border: 1px dashed rgba(255,255,255,.4); background: rgba(0,0,0,.18); color: #fff; padding: 4px 8px; border-radius: 7px; cursor: pointer; font-size: 12px; }
+#rdv-maroc-slot .rdv-copy:hover { background: rgba(0,0,0,.32); }
+#rdv-maroc-slot .rdv-copy.rdv-done { border-style: solid; background: #34d399; color: #052e16; }
+#rdv-maroc-slot .rdv-s-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+#rdv-maroc-slot .rdv-s-actions button { border: 1px solid rgba(255,255,255,.3); background: rgba(255,255,255,.1); color: #fff; padding: 9px 14px; border-radius: 10px; cursor: pointer; font-weight: 600; }
+#rdv-maroc-slot .rdv-s-actions button:hover { background: rgba(255,255,255,.22); }
+#rdv-maroc-slot .rdv-s-actions .rdv-primary { background: #34d399; color: #052e16; border-color: #34d399; }
+#rdv-maroc-slot .rdv-s-actions .rdv-primary:hover { background: #6ee7b7; }
+
+/* ---------- whole-page pulse for a few seconds when a slot appears ---------- */
+#rdv-maroc-flash { position: fixed; inset: 0; z-index: 2147483645; pointer-events: none; box-shadow: inset 0 0 0 6px #34d399; animation: rdv-flash-edge 1s ease-in-out infinite; }
+@keyframes rdv-flash-edge { 0%,100% { box-shadow: inset 0 0 0 4px rgba(52,211,153,.9), inset 0 0 40px rgba(52,211,153,.25); } 50% { box-shadow: inset 0 0 0 12px rgba(52,211,153,.5), inset 0 0 80px rgba(52,211,153,.35); } }
+
+/* ---------- picker ---------- */
 html.rdv-picking, html.rdv-picking * { cursor: crosshair !important; }
 .rdv-hover { outline: 3px solid #f59e0b !important; outline-offset: 2px; background: rgba(245,158,11,.08) !important; }
 
 /* Free days / filled slot lists while a slot is visible. We only point at them; the click is yours. */
 .rdv-slot-day { outline: 3px solid #16a34a !important; outline-offset: 2px; animation: rdv-slot-pulse 1.2s infinite; }
 @keyframes rdv-slot-pulse { 0%,100% { box-shadow: 0 0 0 4px rgba(22,163,74,.3); } 50% { box-shadow: 0 0 0 10px rgba(22,163,74,0); } }
-#rdv-maroc-badge[data-state="booked"] { background: #14532d; }
-#rdv-maroc-badge[data-state="booked"] .rdv-dot { background: #4ade80; }
+/* "Show me the day": a short, unmistakable flash on that one cell. */
+.rdv-flash { animation: rdv-flash-cell .4s ease-in-out 6 !important; outline: 4px solid #facc15 !important; outline-offset: 3px; }
+@keyframes rdv-flash-cell { 0%,100% { background: inherit; } 50% { background: #fde047 !important; } }
