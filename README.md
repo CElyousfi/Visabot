@@ -5,11 +5,13 @@ moment a slot appears, so you can book it yourself. Personal use.
 
 **What it does**
 - You log in to the portal yourself and open the appointment calendar.
-- The extension reads that page, refreshes it at the interval you choose (60 s minimum, slightly
+- The extension starts watching by itself, reads your destination / centre / category from the page, refreshes it at the interval you choose (60 s minimum, slightly
   randomised), and watches for live changes.
 - When a day becomes selectable, a slot list fills, or the page says slots are available, you get a
-  desktop notification, a sound, an in-page banner, and the tab is brought to the front.
-- If the portal shows a human verification or logs you out, the watcher **stops and tells you**.
+  desktop notification, a sound, an in-page banner, the free days are outlined on the page, and the
+  tab is brought to the front.
+- If the portal shows a human verification or logs you out, the watcher **pauses and tells you**, then
+  resumes by itself once the calendar is back.
 
 **What it never does**
 - It never stores or sends your password. It has no server.
@@ -39,22 +41,31 @@ calendar page you open, so any BLS or VFS page in Morocco works.
 ## Use
 1. Go to the portal, log in, pass any verification yourself, and open the appointment calendar
    (category and centre selected on the portal as usual).
-2. Click the extension icon. Choose your destination, centre, category, refresh interval.
-3. Optional: **Pick calendar area** and click the calendar on the page. The watcher then ignores the
-   rest of the page, which makes detection more accurate.
-4. **Start watching this tab**. Keep the tab open; switch to other windows freely.
-5. On alert: come back, choose the date, and book.
+2. That is all. As soon as a calendar shows in the tab, the extension starts watching by itself:
+   the small badge in the bottom-right corner says **Watching**. Destination, centre and category are
+   read from the page and only label the alerts; open the popup if you want to check or change them.
+3. Keep the tab open; switch to other windows freely.
+4. On alert the tab comes to the front, the free day(s) are outlined in green and scrolled into view.
+   Click one, choose the time, confirm. The extension never clicks for you.
 
-**Pause on slot** stops refreshing once a slot is seen so the page does not reload while you book.
-**Re-alert** repeats the alert every N minutes while a slot stays visible.
+If the portal shows a verification or logs you out, the watcher pauses, tells you, and resumes on its
+own once you have dealt with it and the calendar is back.
+
+**Popup options**
+- **Start by itself** (on by default). Switch it off to start and stop watching with the buttons.
+  **Stop** always wins: the page you stopped on is not watched again until you press Start.
+- **Pick calendar area**: click anywhere on the calendar to watch only that part of the page. Useful
+  if the page has other date pickers.
+- **Pause on slot** stops refreshing once a slot is seen so the page does not reload while you book.
+- **Re-alert** repeats the alert every N minutes while a slot stays visible.
 
 ## Notes
 - Keep the refresh interval reasonable (90–180 s is plenty). Hammering the portal gets accounts blocked
   and is exactly what the providers are fighting.
 - Sound needs one click on the page after loading (browser autoplay rule). The **Test alert** button
   checks notifications and sound.
-- Detection is heuristic. If the status stays "Watching (page not recognised yet)", use **Pick calendar
-  area**. If you get a false alert, tell me what the page showed and I will tune the rules.
+- Detection is heuristic. If the badge stays "waiting for a calendar on this page", use **Pick calendar
+  area** in the popup, or press **Start** there. If you get a false alert, tell me what the page showed and I will tune the rules.
 
 ## Development
 ```
