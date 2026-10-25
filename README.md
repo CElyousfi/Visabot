@@ -59,6 +59,23 @@ own once you have dealt with it and the calendar is back.
 - **Pause on slot** stops refreshing once a slot is seen so the page does not reload while you book.
 - **Re-alert** repeats the alert every N minutes while a slot stays visible.
 
+## Dashboard
+Click the list icon in the popup (or right-click the extension icon → **Options**).
+
+- **One application per person and destination.** Fill in the applicant's details once; every value has
+  a copy button (dates copy as DD/MM/YYYY) so the portal form takes seconds.
+- **Live status** for each one: Watching, Slot available, Paused, Booked. Slots seen by the watcher are
+  filed under the starred (linked) application, or the one matching the destination.
+- **Bookings are captured automatically.** When the portal shows its confirmation page, the date, time,
+  centre and reference are saved on the application, you get a notification, and watching stops.
+  Booked somewhere else? Enter it by hand in the Appointment tab. **Add to calendar** gives an .ics
+  with a reminder the day before.
+- **Documents checklist** and **Documents** (passport scan, photos, insurance…), kept in this browser
+  only, with preview and download.
+- **Back up** (database icon) exports everything except the documents as JSON.
+
+Nothing leaves your browser: there is no server.
+
 ## Notes
 - Keep the refresh interval reasonable (90–180 s is plenty). Hammering the portal gets accounts blocked
   and is exactly what the providers are fighting.

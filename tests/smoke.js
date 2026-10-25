@@ -75,6 +75,12 @@ const FIXTURES = {
   'kendo-none': () => kendoCalendar(),
   'cf-challenge': () => `<!doctype html><html><head><title>Just a moment...</title></head><body><h1>Just a moment...</h1><p>Checking your browser before accessing the site.</p></body></html>`,
   'captcha-widget': () => page('BLS – Appointment', `<h2>Appointment Date</h2><div class="g-recaptcha" style="width:304px;height:78px;border:1px solid #ccc"></div>`),
+  'bls-booked': () => page('BLS Spain – Appointment confirmed', `
+    <h2>Appointment Confirmed</h2>
+    <p>Your appointment has been booked successfully. Please print this page.</p>
+    <table><tr><td>Appointment No :</td><td>BLS/RBA/2611/00123</td></tr>
+    <tr><td>Appointment Date:</td><td>12/11/2026</td></tr><tr><td>Time Slot:</td><td>09:30-09:45</td></tr>
+    <tr><td>Centre:</td><td>Rabat</td></tr></table>`),
   'login': () => `<!doctype html><html><body><main><h1>Sign in</h1><input type="email"><input type="password"><a href="#">Forgot password?</a></main></body></html>`,
 };
 
@@ -488,6 +494,102 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert((await vauto.$$('.rdv-slot-day')).length === 1, 'free day not highlighted');
   });
   await vauto.close();
+
+  // ---------- dashboard: applications, booking capture, documents ----------
+  await sw.evaluate(() => chrome.storage.local.set({ applications: [], settings: { autoStart: false, auto: false, sound: false }, status: null, lastHit: null, bookedSeen: [] }));
+  const dash = await context.newPage();
+  await dash.goto(`chrome-extension://${extId}/dashboard.html`);
+  await dash.waitForSelector('#rows', { state: 'attached' });
+  let appId;
+
+  await check('dashboard: empty state, then a new application is created, filled and linked to the watcher', async () => {
+    assert(await dash.isVisible('#empty'), 'empty state not shown');
+    await dash.click('#newApp');
+    await dash.waitForSelector('#drawer:not(.hidden) [data-key="surname"]');
+    await dash.fill('[data-key="givenName"]', 'Yahya');
+    await dash.fill('[data-key="surname"]', 'El Amrani');
+    await dash.fill('[data-key="passport"]', 'XB1234567');
+    await dash.fill('[data-key="birthDate"]', '1994-03-07');
+    await dash.selectOption('[data-key="destinationId"]', 'spain');
+    await dash.selectOption('[data-key="centre"]', 'Rabat');
+    await dash.click('#editBtn');                     // Done
+    await dash.waitForFunction(() => document.getElementById('pName').textContent === 'Yahya El Amrani');
+    const { applications, settings } = await storage();
+    assert(applications.length === 1, `${applications.length} applications`);
+    const a = applications[0];
+    appId = a.id;
+    assert(a.applicant.passport === 'XB1234567' && a.centre === 'Rabat' && a.destinationId === 'spain', JSON.stringify(a));
+    assert(settings.activeAppId === a.id, 'first application should be linked to the watcher');
+    const row = await dash.textContent('#rows tr');
+    assert(/#1001/.test(row) && /Yahya El Amrani/.test(row) && /Spain/.test(row) && /Rabat/.test(row), row);
+    assert((await dash.$$('#kvApplicant .copy')).length >= 4, 'copy buttons missing');
+    const birth = await dash.$$eval('#kvApplicant .v', vs => vs.map(v => v.textContent).find(t => /1994/.test(t)));
+    assert(birth, 'birth date not shown');
+  });
+
+  await check('dashboard: the portal confirmation page books the linked application automatically', async () => {
+    await clearNotifications();
+    const confirmUrl = 'https://www.blsspainmorocco.com/MAR/appointment/confirmation';
+    scenario[new URL(confirmUrl).pathname] = 'bls-booked';
+    const conf = await context.newPage();
+    await conf.goto(confirmUrl);
+    await waitBadge(conf, 'booked', 10000);
+    let a;
+    const end = Date.now() + 5000;
+    do { a = (await storage()).applications.find(x => x.id === appId); if (a.status === 'booked') break; await conf.waitForTimeout(100); } while (Date.now() < end);
+    assert(a.status === 'booked', `status ${a.status}`);
+    assert(a.appointment.date === '2026-11-12' && a.appointment.time === '09:30' && a.appointment.reference === 'BLS/RBA/2611/00123', JSON.stringify(a.appointment));
+    assert(a.history[0].type === 'booked', JSON.stringify(a.history[0]));
+    assert((await notifications()).some(id => id.startsWith('rdv-booked-')), 'no booked notification');
+    // Reloading the confirmation page must not file the booking twice.
+    await conf.reload();
+    await waitBadge(conf, 'booked', 10000);
+    await conf.waitForTimeout(800);
+    const again = (await storage()).applications.find(x => x.id === appId);
+    assert(again.history.filter(h => h.type === 'booked').length === 1, 'booking recorded twice');
+    await conf.close();
+  });
+
+  await check('dashboard: shows the booking, its details and an .ics for the calendar', async () => {
+    await dash.waitForFunction(() => /Booked/.test(document.getElementById('sBooked').closest('.stat').textContent) && document.getElementById('sBooked').textContent === '1');
+    const row = await dash.textContent('#rows tr');
+    assert(/Booked/.test(row) && /2026/.test(row) && /09:30/.test(row), row);
+    await dash.click('#dTabs [data-t="appt"]');
+    await dash.waitForSelector('.appt.booked');
+    const card = await dash.textContent('.appt.booked');
+    assert(/BLS\/RBA\/2611\/00123/.test(card) && /09:30/.test(card) && /Rabat/.test(card), card);
+    const [dl] = await Promise.all([dash.waitForEvent('download'), dash.click('text=Add to calendar')]);
+    const ics = fs.readFileSync(await dl.path(), 'utf8');
+    assert(/DTSTART:20261112T093000/.test(ics) && /BLS\/RBA\/2611\/00123/.test(ics), ics);
+    await dash.click('.checklist input >> nth=0');
+    await dash.waitForFunction(() => /1 \/ 10 ready/.test(document.getElementById('chkCount').textContent));
+  });
+
+  await check('dashboard: documents are stored in the browser, previewed and deleted', async () => {
+    await dash.click('#dTabs [data-t="docs"]');
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+    await dash.setInputFiles('#fileIn', { name: 'passport-scan.png', mimeType: 'image/png', buffer: png });
+    await dash.waitForSelector('.doc');
+    assert(/passport-scan\.png/.test(await dash.textContent('.doc')), 'document not listed');
+    await dash.click('.doc >> text=Preview');
+    await dash.waitForSelector('#viewer:not(.hidden) img');
+    await dash.click('#zIn');
+    assert((await dash.textContent('#zVal')) === '125%', 'zoom');
+    dash.once('dialog', d => d.accept());
+    await dash.click('.doc [title="Delete"]');
+    await dash.waitForFunction(() => !document.querySelector('.doc'));
+  });
+
+  await check('popup: lists the application and shows the booked appointment', async () => {
+    const p = await openPopup();
+    await p.waitForFunction(() => !document.getElementById('booked').classList.contains('hidden'));
+    const txt = await p.textContent('#bookedText');
+    assert(/Yahya El Amrani/.test(txt) && /2026-11-12/.test(txt) && /BLS\/RBA\/2611\/00123/.test(txt), txt);
+    const opts = await p.$$eval('#activeApp option', os => os.map(o => o.textContent));
+    assert(opts.some(o => /#1001 Yahya El Amrani · Spain ✓/.test(o)), opts.join(' | '));
+    await p.close();
+  });
+  await dash.close();
 
   await context.close();
   fs.rmSync(userDataDir, { recursive: true, force: true });

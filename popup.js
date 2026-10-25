@@ -1,33 +1,6 @@
 'use strict';
 
-/* Moroccan Schengen landscape (France excluded: random allocation, nothing to watch). */
-const DESTINATIONS = [
-  { id: 'spain', name: 'Spain · Espagne', provider: 'BLS International', portal: 'https://www.blsspainmorocco.com/',
-    centres: ['Casablanca', 'Rabat', 'Tanger', 'Nador', 'Tétouan', 'Agadir'] },
-  { id: 'portugal', name: 'Portugal', provider: 'BLS International', portal: 'https://www.blsinternational.com/',
-    centres: ['Casablanca', 'Rabat', 'Tanger', 'Other'] },
-  { id: 'italy', name: 'Italy · Italie', provider: 'VFS Global', portal: 'https://visa.vfsglobal.com/mar/en/ita',
-    centres: ['Casablanca', 'Rabat', 'Tanger', 'Other'] },
-  { id: 'netherlands', name: 'Netherlands · Pays-Bas', provider: 'VFS Global', portal: 'https://visa.vfsglobal.com/mar/en/nld',
-    centres: ['Rabat', 'Tanger', 'Other'] },
-  { id: 'germany', name: 'Germany · Allemagne', provider: 'VFS Global', portal: 'https://visa.vfsglobal.com/mar/en/deu',
-    centres: ['Casablanca', 'Rabat', 'Other'] },
-  { id: 'switzerland', name: 'Switzerland · Suisse', provider: 'VFS Global', portal: 'https://visa.vfsglobal.com/mar/en/che',
-    centres: ['Rabat', 'Casablanca', 'Other'] },
-  { id: 'belgium', name: 'Belgium · Belgique', provider: 'VFS Global', portal: 'https://visa.vfsglobal.com/mar/en/bel',
-    centres: ['Casablanca', 'Rabat', 'Other'] },
-  { id: 'austria', name: 'Austria · Autriche', provider: 'VFS Global', portal: 'https://visa.vfsglobal.com/mar/en/aut',
-    centres: ['Rabat', 'Other'] },
-  { id: 'other', name: 'Other Schengen country', provider: 'Check the embassy site', portal: '',
-    centres: ['Casablanca', 'Rabat', 'Tanger', 'Marrakech', 'Fès', 'Agadir', 'Oujda', 'Nador', 'Tétouan', 'Other'] },
-  { id: 'france', name: 'France (not supported)', provider: 'TLScontact – random allocation', portal: 'https://visas-fr.tlscontact.com/',
-    centres: [], unsupported: true },
-];
-const CATEGORIES = [
-  'Tourism · Tourisme', 'Family / friends visit · Visite familiale', 'Business · Affaires', 'Study · Études',
-  'Medical · Médical', 'Work · Travail', 'Family reunification · Regroupement familial', 'Transit', 'Other · Autre',
-];
-
+/* DESTINATIONS and CATEGORIES come from data.js. */
 const $ = id => document.getElementById(id);
 const load = keys => new Promise(r => chrome.storage.local.get(keys, r));
 const save = obj => new Promise(r => chrome.storage.local.set(obj, r));
@@ -107,18 +80,43 @@ function renderAuto(settings, ctx) {
   if (auto && settings.autoStarted && settings.watching) $('autoText').textContent += ' · started by itself';
 }
 
+/** Which dashboard application the watcher files slots and bookings under. */
+function renderApps(applications, settings) {
+  const sel = $('activeApp');
+  if (document.activeElement === sel) return;
+  const opts = [['', applications.length ? 'Auto (match destination)' : 'None yet – add one in the dashboard']];
+  for (const a of applications) {
+    const ap = a.applicant || {};
+    const name = [ap.givenName, ap.surname].filter(Boolean).join(' ') || 'Unnamed applicant';
+    opts.push([a.id, `#${a.num} ${name} · ${destById(a.destinationId).name.split(' ·')[0]}${a.status === 'booked' ? ' ✓' : ''}`]);
+  }
+  const key = JSON.stringify(opts) + (settings.activeAppId || '');
+  if (sel.dataset.key === key) return;
+  sel.dataset.key = key;
+  sel.replaceChildren(...opts.map(([v, t]) => Object.assign(document.createElement('option'), { value: v, textContent: t })));
+  sel.value = applications.some(a => a.id === settings.activeAppId) ? settings.activeAppId : '';
+}
+
 async function renderStatus() {
-  const { settings = {}, status = {}, lastHit, nextAt, pageContext } = await load(['settings', 'status', 'lastHit', 'nextAt', 'pageContext']);
+  const { settings = {}, status = {}, lastHit, nextAt, pageContext, applications = [] } = await load(['settings', 'status', 'lastHit', 'nextAt', 'pageContext', 'applications']);
   const watching = !!settings.watching;
   renderAuto(settings, pageContext);
+  renderApps(applications, settings);
   $('start').classList.toggle('hidden', watching);
   $('stop').classList.toggle('hidden', !watching);
-  const st = watching ? (status.state || 'watching') : 'idle';
+  const st = watching ? (status.state || 'watching') : status.state === 'booked' ? 'booked' : 'idle';
   $('statusPill').dataset.state = st;
-  $('statusPill').textContent = { idle: 'Idle', watching: 'Watching', none: 'No slots', unknown: 'Watching', available: 'SLOT!', captcha: 'Needs you', login: 'Logged out', stopped: 'Stopped' }[st] || st;
+  $('statusPill').textContent = { idle: 'Idle', watching: 'Watching', none: 'No slots', unknown: 'Watching', available: 'SLOT!', captcha: 'Needs you', login: 'Logged out', stopped: 'Stopped', booked: 'Booked ✓' }[st] || st;
   $('statusText').textContent = watching
     ? ({ none: 'No slots yet', unknown: 'Watching (page not recognised yet)', available: 'Slot visible – book now!', captcha: 'Solve the verification', login: 'Session ended' }[status.state] || 'Watching…')
-    : (status.state === 'captcha' ? 'Paused: solve the verification, I resume after' : status.state === 'login' ? 'Paused: log in and open the calendar' : settings.autoStart === false ? 'Not watching' : 'Waiting for a calendar in a portal tab');
+    : (status.state === 'booked' ? 'Appointment booked' : status.state === 'captcha' ? 'Paused: solve the verification, I resume after' : status.state === 'login' ? 'Paused: log in and open the calendar' : settings.autoStart === false ? 'Not watching' : 'Waiting for a calendar in a portal tab');
+  const booked = applications.filter(a => a.status === 'booked' && a.appointment).sort((x, y) => (y.appointment.at || 0) - (x.appointment.at || 0))[0];
+  $('booked').classList.toggle('hidden', !booked);
+  if (booked) {
+    const ap = booked.appointment;
+    const who = [booked.applicant && booked.applicant.givenName, booked.applicant && booked.applicant.surname].filter(Boolean).join(' ');
+    $('bookedText').textContent = [who, destById(booked.destinationId).name.split(' ·')[0], ap.centre, ap.date, ap.time, ap.reference && `ref ${ap.reference}`].filter(Boolean).join(' · ');
+  }
   $('lastCheck').textContent = watching ? fmt(status.at) : '—';
   const left = nextAt ? Math.max(0, Math.round((nextAt - Date.now()) / 1000)) : null;
   $('nextCheck').textContent = watching && settings.autoRefresh && left != null ? `${left}s` : '—';
@@ -203,6 +201,16 @@ async function init() {
     const t = await activeTab();
     if (isPortalUrl(t.url) && await ensureContent(t.id)) await sendToTab(t.id, { type: 'checkNow' });
     setTimeout(renderStatus, 500);
+  };
+  $('openDash').onclick = () => { chrome.runtime.openOptionsPage(); window.close(); };
+  $('activeApp').onchange = async () => {
+    const { settings: s = {}, applications = [] } = await load(['settings', 'applications']);
+    s.activeAppId = $('activeApp').value;
+    const a = applications.find(x => x.id === s.activeAppId);
+    if (a) Object.assign(s, { destinationId: a.destinationId, destination: destById(a.destinationId).name.split(' ·')[0], centre: a.centre || s.centre, category: a.category || s.category });
+    await save({ settings: s });
+    fillChoices(s);
+    await renderStatus();
   };
   $('test').onclick = async () => {
     const r = await chrome.runtime.sendMessage({ type: 'slotFound', test: true, title: 'RDV Maroc: test alert', body: 'This is what a real slot alert looks like.', tabId: null, sound: $('sound').checked });

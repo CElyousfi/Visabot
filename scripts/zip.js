@@ -19,6 +19,8 @@ function referencedFiles() {
     (m.background.scripts || []).forEach(f => refs.add(f));
   }
   if (m.action && m.action.default_popup) refs.add(m.action.default_popup);
+  if (m.options_page) refs.add(m.options_page);
+  if (m.options_ui && m.options_ui.page) refs.add(m.options_ui.page);
   Object.values((m.action && m.action.default_icon) || {}).forEach(f => refs.add(f));
   for (const cs of m.content_scripts || []) [...(cs.js || []), ...(cs.css || [])].forEach(f => refs.add(f));
   for (const w of m.web_accessible_resources || []) (w.resources || []).forEach(f => refs.add(f));

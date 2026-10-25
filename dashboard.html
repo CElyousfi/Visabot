@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RDV Maroc · Applications</title>
+<link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7 9h10M7 13h10M7 17h6"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></symbol>
+    <symbol id="i-id" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="M6 16c.7-1.4 1.8-2 3-2s2.3.6 3 2M14 10h4M14 14h3"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
+    <symbol id="i-hash" viewBox="0 0 24 24"><path d="M5 9h14M5 15h14M10 4l-2 16M16 4l-2 16"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 6l4 4"/></symbol>
+    <symbol id="i-zoom-in" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5M8 11h6M11 8v6"/></symbol>
+    <symbol id="i-zoom-out" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5M8 11h6"/></symbol>
+    <symbol id="i-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 12l6-6"/></symbol>
+    <symbol id="i-backup" viewBox="0 0 24 24"><path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3z"/><path d="M4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
+  </defs>
+</svg>
+
+<div class="shell">
+  <aside class="rail">
+    <div class="rail-logo" title="RDV Maroc"><svg><use href="#i-shield"/></svg></div>
+    <button class="rail-btn active" title="Applications"><svg><use href="#i-list"/></svg></button>
+    <button class="rail-btn" id="railNew" title="New application"><svg><use href="#i-plus"/></svg></button>
+    <div class="rail-spacer"></div>
+    <button class="rail-btn" id="railExport" title="Back up all data (JSON, without documents)"><svg><use href="#i-backup"/></svg></button>
+    <div class="rail-mark">R</div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="crumb"><svg><use href="#i-right"/></svg><span>Applications</span></div>
+      <label class="search top"><svg><use href="#i-search"/></svg><input id="topSearch" placeholder="Search name, passport, reference…"></label>
+      <div id="livePill" class="live" data-state="idle"><span class="dot"></span><span id="liveText">Watcher idle</span></div>
+      <button id="newApp" class="btn primary"><svg><use href="#i-plus"/></svg>New application</button>
+    </header>
+
+    <section class="panel">
+      <div class="panel-title"><svg><use href="#i-radar"/></svg>Appointment status</div>
+      <div class="stats">
+        <div class="stat"><div class="stat-k"><span class="ic violet"><svg><use href="#i-list"/></svg></span>Total applications</div><div class="stat-v" id="sTotal">0</div></div>
+        <div class="stat"><div class="stat-k"><span class="ic blue"><svg><use href="#i-radar"/></svg></span>Watching</div><div class="stat-v" id="sWatching">0</div></div>
+        <div class="stat"><div class="stat-k"><span class="ic amber"><svg><use href="#i-calendar"/></svg></span>Slot seen</div><div class="stat-v" id="sSlot">0</div></div>
+        <div class="stat"><div class="stat-k"><span class="ic green"><svg><use href="#i-check"/></svg></span>Booked</div><div class="stat-v" id="sBooked">0</div></div>
+      </div>
+    </section>
+
+    <section class="panel grow">
+      <div class="toolbar">
+        <label class="search"><svg><use href="#i-search"/></svg><input id="search" placeholder="Search…"></label>
+        <div class="tabs" id="filters">
+          <button data-f="all" class="on">All</button>
+          <button data-f="watching">Watching</button>
+          <button data-f="slot">Slot seen</button>
+          <button data-f="paused">Paused</button>
+          <button data-f="booked">Booked</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="grid">
+          <thead><tr><th>ID</th><th>Name</th><th>Destination</th><th>Centre</th><th>Visa type</th><th>Status</th><th>Appointment</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div id="empty" class="empty hidden">
+          <div class="empty-ic"><svg><use href="#i-calendar"/></svg></div>
+          <h3>No application yet</h3>
+          <p>Add one per person and destination. Slots and bookings seen by the watcher are filed here automatically.</p>
+          <button class="btn primary" id="emptyNew"><svg><use href="#i-plus"/></svg>New application</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div id="scrim" class="scrim hidden"></div>
+<aside id="drawer" class="drawer hidden" aria-label="Application detail">
+  <div class="d-head">
+    <h2>Application Detail</h2>
+    <div class="d-nav">
+      <button id="prev" class="icon-btn" title="Previous"><svg><use href="#i-left"/></svg></button>
+      <button id="next" class="icon-btn" title="Next"><svg><use href="#i-right"/></svg></button>
+      <span id="pos" class="pos"></span>
+      <button id="close" class="icon-btn plain" title="Close"><svg><use href="#i-x"/></svg></button>
+    </div>
+  </div>
+  <div class="d-body">
+    <div class="profile">
+      <div id="avatar" class="avatar lg"></div>
+      <div class="who">
+        <div class="name"><span id="pName"></span></div>
+        <div class="meta"><span>ID: <b id="pId"></b></span><span id="pMail" class="lnk"></span><span id="pPhone" class="lnk"></span></div>
+      </div>
+      <button id="activeBtn" class="icon-btn plain star" title="Link the watcher to this application"><svg><use href="#i-star"/></svg></button>
+    </div>
+    <div class="summary">
+      <div><div class="k">Application ID</div><div class="v" id="sumId"></div></div>
+      <div><div class="k">Status</div><div class="v" id="sumStatus"></div></div>
+      <div><div class="k" id="sumDateK">Appointment</div><div class="v" id="sumDate"></div></div>
+    </div>
+    <div class="seg" id="dTabs">
+      <button data-t="detail" class="on">Detail Information</button>
+      <button data-t="appt">Appointment</button>
+      <button data-t="docs">Documents</button>
+    </div>
+
+    <div class="tab" id="t-detail">
+      <div class="sec-head"><h3><svg><use href="#i-id"/></svg>Applicant Information</h3><button id="editBtn" class="btn ghost sm"><svg><use href="#i-edit"/></svg><span>Edit</span></button></div>
+      <div class="kv" id="kvApplicant"></div>
+      <div class="sec-head"><h3><svg><use href="#i-globe"/></svg>Visa Request</h3></div>
+      <div class="kv" id="kvVisa"></div>
+      <div class="danger-zone"><button id="deleteApp" class="btn ghost sm danger"><svg><use href="#i-trash"/></svg>Delete application</button></div>
+    </div>
+
+    <div class="tab hidden" id="t-appt">
+      <div id="apptCard"></div>
+      <div class="sec-head"><h3><svg><use href="#i-check"/></svg>Documents checklist</h3><span id="chkCount" class="muted"></span></div>
+      <div id="checklist" class="checklist"></div>
+      <div class="sec-head"><h3><svg><use href="#i-clock"/></svg>History</h3></div>
+      <ol id="history" class="timeline"></ol>
+    </div>
+
+    <div class="tab hidden" id="t-docs">
+      <div id="docList" class="docs"></div>
+      <label class="drop" id="drop">
+        <input id="fileIn" type="file" multiple accept="image/*,application/pdf" hidden>
+        <svg><use href="#i-upload"/></svg>
+        <span><b>Add documents</b> — passport scan, photo, insurance, bookings (PDF or image). Stored only in this browser.</span>
+      </label>
+      <div id="viewer" class="viewer hidden">
+        <div class="viewer-stage" id="stage"></div>
+        <div class="zoom">
+          <button id="zOut" title="Zoom out"><svg><use href="#i-zoom-out"/></svg></button>
+          <button id="zIn" title="Zoom in"><svg><use href="#i-zoom-in"/></svg></button>
+          <span id="zVal">100%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<div id="toast" class="toast hidden"></div>
+<script src="data.js"></script>
+<script src="dashboard.js"></script>
+</body>
+</html>
