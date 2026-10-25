@@ -35,3 +35,5 @@ html.rdv-picking, html.rdv-picking * { cursor: crosshair !important; }
 /* Free days / filled slot lists while a slot is visible. We only point at them; the click is yours. */
 .rdv-slot-day { outline: 3px solid #16a34a !important; outline-offset: 2px; animation: rdv-slot-pulse 1.2s infinite; }
 @keyframes rdv-slot-pulse { 0%,100% { box-shadow: 0 0 0 4px rgba(22,163,74,.3); } 50% { box-shadow: 0 0 0 10px rgba(22,163,74,0); } }
+#rdv-maroc-badge[data-state="booked"] { background: #14532d; }
+#rdv-maroc-badge[data-state="booked"] .rdv-dot { background: #4ade80; }

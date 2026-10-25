@@ -20,6 +20,7 @@
   let loginSince = 0;
   let loginTimer = null;
   const LOGIN_CONFIRM_MS = 4000;
+  const MUTATION_DEBOUNCE_MS = 400;   // react to a calendar change in well under a second
 
   // ---------- helpers ----------
   const $ = s => document.querySelector(s);
@@ -180,6 +181,28 @@
     return ctx;
   }
 
+  // ---------- the booking you made ----------
+  /** When the portal shows its confirmation page, record the appointment and stop watching. */
+  async function checkBooking() {
+    const text = (document.body.innerText || '').slice(0, 30000);
+    const b = D.detectBooking(text);
+    if (!b.booked) return false;
+    const key = D.hash(`${location.host}|${b.reference}|${b.date}|${b.time}`);
+    const summary = [b.date, b.time, b.reference].filter(Boolean).join(' · ');
+    const { bookedSeen = [] } = await load('bookedSeen');
+    if (bookedSeen.includes(key)) { setBadge('booked', 'Booked ✓', summary); return true; }   // already filed
+    await store({ bookedSeen: [...bookedSeen, key].slice(-50) });
+    const ctx = pageContext();
+    stopTimer();
+    highlightSlots(document.body, false);
+    if (settings && settings.watching) await patchSettings({ watching: false, manualStopUrl: location.href });
+    await send({ type: 'booked', booking: Object.assign({}, b, ctx, { url: location.href, at: Date.now() }), tabId: myTabId });
+    setBadge('booked', 'Booked ✓', summary);
+    banner('✅ Appointment booked', `${[b.date, b.time].filter(Boolean).join(' at ')}${b.reference ? `\nReference: ${b.reference}` : ''}\nSaved in the RDV Maroc dashboard. Watching stopped.`);
+    await publishStatus({ state: 'booked', reasons: b.reasons, dates: b.date ? [b.date] : [] });
+    return true;
+  }
+
   // ---------- highlight what to click (we never click it ourselves) ----------
   function highlightSlots(area, on, scroll) {
     const want = new Set();
@@ -326,7 +349,7 @@
         const where = describeTarget();
         const datesTxt = res.dates.length ? `Dates seen: ${res.dates.slice(0, 6).join(', ')}` : res.reasons.join(' · ');
         banner('🎉 Slot detected – book it now', `${where}\n${datesTxt}\nThe free day(s) are outlined in green: click one, choose the time, confirm.`);
-        const r = await send({ type: 'slotFound', title: `RDV Maroc: slot at ${where}`, body: datesTxt, url: location.href, tabId: myTabId, sound: !!settings.sound });
+        const r = await send({ type: 'slotFound', title: `RDV Maroc: slot at ${where}`, body: datesTxt, dates: res.dates, url: location.href, tabId: myTabId, sound: !!settings.sound });
         if (!r || !r.soundPlayed) playSound();
         await store({ lastHit: { at: Date.now(), where, dates: res.dates, reasons: res.reasons, url: location.href } });
       }
@@ -390,7 +413,10 @@
     let t = null;
     observer = new MutationObserver(() => {
       clearTimeout(t);
-      t = setTimeout(() => settings && settings.watching ? evaluate('mutation') : tryAutoStart(), 1500);
+      t = setTimeout(async () => {
+        if (await checkBooking()) return;
+        if (settings && settings.watching) evaluate('mutation'); else tryAutoStart();
+      }, MUTATION_DEBOUNCE_MS);
     });
     observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class', 'disabled', 'aria-disabled'] });
   }
@@ -487,6 +513,7 @@
 
   async function start() {
     settings = await readSettings();
+    if (await checkBooking()) { startObserver(); return; }
     if (watchedElsewhere()) {
       setBadge('unknown', 'RDV Maroc', 'watching another tab');
       stopObserver(); stopTimer();

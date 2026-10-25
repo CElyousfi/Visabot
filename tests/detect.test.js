@@ -133,6 +133,21 @@ test('detectContext falls back to headings and leaves unknowns empty', () => {
   assert.equal(none.centre, '');
 });
 
+test('detectBooking reads a BLS / VFS confirmation page', () => {
+  const bls = D.detectBooking('Appointment Confirmed\nYour appointment has been booked successfully.\nAppointment No : BLS/RBA/2611/00123\nAppointment Date: 12/11/2026\nTime Slot: 09:30-09:45\nCentre: Rabat');
+  assert.deepEqual([bls.booked, bls.date, bls.time, bls.reference], [true, '2026-11-12', '09:30', 'BLS/RBA/2611/00123']);
+  const vfs = D.detectBooking('Booking confirmed. Reference Number: ITA-MA-998877 on 03 décembre 2026 at 10h15');
+  assert.deepEqual([vfs.booked, vfs.date, vfs.time, vfs.reference], [true, '2026-12-03', '10:15', 'ITA-MA-998877']);
+  const fr = D.detectBooking('Votre rendez-vous est confirmé pour le 5/1/2027 à 8:05');
+  assert.deepEqual([fr.booked, fr.date, fr.time], [true, '2027-01-05', '08:05']);
+});
+
+test('detectBooking ignores pages that only mention confirmation', () => {
+  assert.equal(D.detectBooking('Download your appointment confirmation after booking.').booked, false);
+  assert.equal(D.detectBooking('Select a date. Earliest available 12/11/2026').booked, false);
+  assert.equal(D.detectBooking('').booked, false);
+});
+
 test('hash is stable and changes with input', () => {
   assert.equal(D.hash('available|2026-11-12|3|0'), D.hash('available|2026-11-12|3|0'));
   assert.notEqual(D.hash('available|2026-11-12|3|0'), D.hash('available|2026-11-12|4|0'));

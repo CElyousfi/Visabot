@@ -241,7 +241,41 @@
     return out;
   }
 
-  const api = { classify, extractDates, hash, norm, reloadDelaySeconds, detectContext, MIN_INTERVAL, NO_SLOT_PHRASES, SLOT_PHRASES, CAPTCHA_MARKERS, LOGIN_MARKERS };
+  // ---------- the portal's own confirmation page ----------
+  const BOOKED_PHRASES = [
+    'appointment confirmed', 'appointment is confirmed', 'appointment has been confirmed', 'appointment has been booked',
+    'appointment booked successfully', 'successfully booked', 'booking confirmed', 'booking is confirmed',
+    'your appointment has been scheduled', 'appointment scheduled successfully', 'appointment confirmation',
+    'rendez-vous confirmé', 'rendez-vous a été confirmé', 'rendez-vous a bien été', 'votre rendez-vous est confirmé', 'réservation confirmée',
+    'cita confirmada', 'su cita ha sido', 'cita reservada',
+    'تم تأكيد الموعد', 'تم حجز الموعد',
+  ];
+  const REF_RE = /(?:reference|référence|referencia|booking|appointment|confirmation|r[ée]servation|cita|rdv)\s*(?:no\.?|number|num[ée]ro|n[°º]|id|code|ref\.?)?\s*[:#]\s*([A-Z0-9][A-Z0-9\-\/]{4,})/i;
+  const TIME_RE = /\b([01]?\d|2[0-3])\s?[:h]\s?([0-5]\d)\b/;
+
+  /**
+   * Did the portal just confirm a booking? Needs a confirmation phrase and a date or a reference,
+   * so a help page that merely mentions "appointment confirmation" does not count.
+   * @returns {{booked:boolean, date?:string, time?:string, reference?:string, reasons?:string[]}}
+   */
+  function detectBooking(text) {
+    const t = norm(text);
+    const hits = BOOKED_PHRASES.filter(p => t.includes(p));
+    if (!hits.length) return { booked: false };
+    const ref = (text || '').match(REF_RE);
+    const dates = extractDates(text);
+    if (!ref && !dates.length) return { booked: false };
+    const time = (text || '').match(TIME_RE);
+    return {
+      booked: true,
+      date: dates[0] || '',
+      time: time ? `${time[1].padStart(2, '0')}:${time[2]}` : '',
+      reference: ref ? ref[1] : '',
+      reasons: hits,
+    };
+  }
+
+  const api = { classify, extractDates, hash, norm, reloadDelaySeconds, detectContext, detectBooking, MIN_INTERVAL, NO_SLOT_PHRASES, SLOT_PHRASES, CAPTCHA_MARKERS, LOGIN_MARKERS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RDVDetect = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -16,9 +16,95 @@ async function playSoundOffscreen() {
   } catch (e) { return false; }
 }
 
+// ---------- applications tracked in the dashboard (stored only in this browser) ----------
+async function getApps() {
+  const { applications = [], settings = {} } = await chrome.storage.local.get(['applications', 'settings']);
+  return { applications, settings };
+}
+
+/** The application an event belongs to: the active one, else one for the same destination, else a new one. */
+function targetApp(applications, settings, ctx = {}, create = true) {
+  let app = applications.find(a => a.id === settings.activeAppId);
+  if (!app && ctx.destinationId) {
+    app = applications.find(a => a.destinationId === ctx.destinationId && (!ctx.centre || !a.centre || a.centre === ctx.centre) && a.status !== 'booked');
+  }
+  if (!app && !create) return null;
+  if (!app) {
+    const n = applications.reduce((m, a) => Math.max(m, a.num || 0), 1000) + 1;
+    app = {
+      id: `app-${Date.now()}`, num: n, createdAt: Date.now(), status: 'watching',
+      destinationId: ctx.destinationId || settings.destinationId || '', destination: ctx.destination || settings.destination || '',
+      centre: ctx.centre || settings.centre || '', category: ctx.category || settings.category || '',
+      applicant: {}, history: [],
+    };
+    applications.push(app);
+  }
+  return app;
+}
+
+function logEvent(app, type, text, extra) {
+  app.history = [{ at: Date.now(), type, text, ...extra }, ...(app.history || [])].slice(0, 200);
+}
+
+async function recordSlot(msg) {
+  const { applications, settings } = await getApps();
+  const app = targetApp(applications, settings, settings);
+  if (app.status !== 'booked') app.status = 'slot';
+  app.lastSlot = { at: Date.now(), dates: msg.dates || [], text: msg.body || '', url: msg.url || '' };
+  logEvent(app, 'slot', msg.body || 'Slot seen', { url: msg.url || '' });
+  await chrome.storage.local.set({ applications });
+}
+
+async function recordBooking(b, tabId) {
+  const { applications, settings } = await getApps();
+  const app = targetApp(applications, settings, b);
+  app.status = 'booked';
+  app.appointment = {
+    date: b.date || '', time: b.time || '', reference: b.reference || '',
+    destination: b.destination || app.destination, centre: b.centre || app.centre, category: b.category || app.category,
+    provider: b.provider || '', url: b.url || '', at: b.at || Date.now(),
+  };
+  if (!app.destination && b.destination) { app.destination = b.destination; app.destinationId = b.destinationId; }
+  if (!app.centre && b.centre) app.centre = b.centre;
+  logEvent(app, 'booked', `Booked ${[b.date, b.time].filter(Boolean).join(' ')}${b.reference ? ` · ref ${b.reference}` : ''}`, { url: b.url || '' });
+  await chrome.storage.local.set({ applications });
+  badge('✓', '#16a34a');
+  try {
+    await chrome.notifications.create(`rdv-booked-${Date.now()}`, {
+      type: 'basic', iconUrl: 'icons/icon128.png', priority: 2, requireInteraction: true,
+      title: 'RDV Maroc: appointment booked ✓',
+      message: [app.appointment.destination, app.appointment.centre, b.date, b.time, b.reference && `ref ${b.reference}`].filter(Boolean).join(' · '),
+    });
+  } catch (e) {}
+  return app;
+}
+
+// Log pauses and resumes on the active application so its history tells the whole story.
+let lastLoggedState = null;
+async function logStatusChange(state) {
+  if (state === lastLoggedState || !['captcha', 'login', 'none', 'available'].includes(state)) return;
+  const prev = lastLoggedState;
+  lastLoggedState = state;
+  const { applications, settings } = await getApps();
+  const app = targetApp(applications, settings, settings, false);
+  if (!app || app.status === 'booked') return;
+  const text = { captcha: 'Paused: verification on the portal', login: 'Paused: logged out', none: prev === 'available' ? 'Slot gone' : 'Watching: no slots', available: 'Slot visible' }[state];
+  if (state === 'none' && prev === 'none') return;
+  if (state === 'captcha' || state === 'login') app.status = 'paused';
+  else if (state === 'none') app.status = 'watching';
+  else if (state === 'available') app.status = 'slot';
+  logEvent(app, state, text);
+  await chrome.storage.local.set({ applications });
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg.type === 'offscreenPlay') return false;   // handled by the offscreen page
   (async () => {
+    if (msg.type === 'booked') {
+      const app = await recordBooking(msg.booking || {}, msg.tabId);
+      reply({ ok: true, appId: app.id });
+      return;
+    }
     if (msg.type === 'whoami') {
       reply({ tabId: sender.tab ? sender.tab.id : null });
       return;
@@ -37,7 +123,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       } catch (e) { /* notifications may be disabled at OS level */ }
       let soundPlayed = false;
       if (msg.type === 'slotFound') {
-        if (!msg.test) badge('!', '#dc2626');
+        if (!msg.test) { badge('!', '#dc2626'); await recordSlot(msg); }
         if (msg.sound !== false) soundPlayed = await playSoundOffscreen();
         await chrome.storage.local.set({ notifTab: { [id]: msg.tabId } });
         // Bring the tab forward so the user can book immediately.
@@ -59,6 +145,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
 });
 
 chrome.notifications.onClicked.addListener(async (id) => {
+  if (id.startsWith('rdv-booked-')) { chrome.runtime.openOptionsPage(); chrome.notifications.clear(id); return; }
   const { notifTab = {} } = await chrome.storage.local.get('notifTab');
   const tabId = notifTab[id];
   if (tabId != null) {
@@ -80,7 +167,9 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.status && changes.status.newValue) {
     const s = changes.status.newValue.state;
+    logStatusChange(s);
     if (s === 'available') badge('!', '#dc2626');
+    else if (s === 'booked') badge('✓', '#16a34a');
     else if (s === 'none' || s === 'unknown') badge('●', '#2563eb');
     else if (s === 'captcha' || s === 'login') badge('?', '#f59e0b');
     else badge('', '#6b7280');
