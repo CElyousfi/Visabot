@@ -166,6 +166,11 @@ test('hasAppointmentVocabulary: appointment pages pass, applicant forms do not',
   assert.equal(D.hasAppointmentVocabulary(''), false);
 });
 
+test('isManualCheckHost: BLS hosts have no auto-refresh, VFS hosts keep it', () => {
+  for (const h of ['www.blsspainmorocco.net', 'www.blsspainmorocco.com', 'blsportugal.com', 'www.blsinternational.com']) assert.equal(D.isManualCheckHost(h), true, h);
+  for (const h of ['visa.vfsglobal.com', 'www.vfsglobal.ma', 'example.com', '']) assert.equal(D.isManualCheckHost(h), false, h);
+});
+
 test('hash is stable and changes with input', () => {
   assert.equal(D.hash('available|2026-11-12|3|0'), D.hash('available|2026-11-12|3|0'));
   assert.notEqual(D.hash('available|2026-11-12|3|0'), D.hash('available|2026-11-12|4|0'));

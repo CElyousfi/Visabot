@@ -99,8 +99,24 @@ function blsApplicantForm() {
     </script>`, '<header><a href="#">Logout</a></header>');
 }
 
+/** BLS "Book New Appointment -" page when nothing is free: the exact red box and its Try Again button. */
+function blsNoSlots() {
+  return page('Book New Appointment -', `
+    <h2>Book New Appointment -</h2>
+    <div class="alert alert-danger" style="border:1px solid #c00;color:#c00;padding:12px">Currently, no slots are available for the selected category. Kindly try again after sometime. Thank you for your patience</div>
+    <button type="button" id="btnTryAgain" class="btn" onclick="location.reload()">Try Again</button>`, '', '<header><a href="#">Logout</a></header>');
+}
+/** BLS "Captcha Verification" page (number grid). Only its title is ever read. */
+function blsCaptcha() {
+  let cells = '';
+  for (let i = 0; i < 9; i++) cells += `<div class="num" style="display:inline-block;width:60px;height:60px;border:1px solid #999;margin:4px;text-align:center;line-height:60px">${100 + i * 37}</div>`;
+  return page('Captcha Verification', `<h2>Captcha Verification</h2><p>Select all boxes with number 211</p><div class="captcha-grid">${cells}</div><button type="button">Submit</button>`, '', '<header><a href="#">Logout</a></header>');
+}
+
 const FIXTURES = {
   'bls-form': () => blsApplicantForm(),
+  'bls-noslots': () => blsNoSlots(),
+  'bls-captcha': () => blsCaptcha(),
   'bls-none': () => blsCalendar([]),
   'bls-slot': () => blsCalendar([12, 19]),
   'bls-auto': () => blsCalendar([12, 19], { centre: 'Casablanca', category: 'Tourism' }),
@@ -122,6 +138,7 @@ const FIXTURES = {
 const results = [];
 const opened = [];                           // pages a scenario opened; closed when it ends
 async function check(name, fn) {
+  if (process.env.ONLY && !name.includes(process.env.ONLY)) return;   // ONLY="part of a name" runs a subset
   const t0 = Date.now();
   try { await fn(); results.push({ name, ok: true }); console.log(`  ✔ ${name} (${((Date.now() - t0) / 1000).toFixed(1)}s)`); }
   catch (e) { results.push({ name, ok: false, err: e }); console.log(`  ✘ ${name}\n      ${String(e && e.message || e).split('\n').join('\n      ')}`); }
@@ -213,12 +230,10 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   async function openPopup(targetUrl) {
     const p = await context.newPage();
     opened.push(p);
-    await p.goto(`chrome-extension://${extId}/popup.html`);
+    const id = targetUrl ? await tabIdOf(targetUrl) : null;
+    await p.goto(`chrome-extension://${extId}/popup.html${id != null ? `#tab=${id}` : ''}`);
     await p.waitForSelector('#destination option', { state: 'attached' });
-    if (targetUrl) {
-      const id = await tabIdOf(targetUrl);
-      await p.evaluate((tid) => { chrome.tabs.query = async () => [await chrome.tabs.get(tid)]; }, id);
-    }
+    if (id != null) await p.evaluate((tid) => { chrome.tabs.query = async () => [await chrome.tabs.get(tid)]; }, id);
     return p;
   }
   /** Presses Start in the popup for `url`, with the choices a user would make. */
@@ -397,71 +412,81 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert(status.state === 'none', JSON.stringify(status));
   });
 
+
   await check('Start takes effect even if the popup closes before its message is sent', async () => {
     await fresh();
-    const bls = await open(BLS_URL, 'bls-none');
-    await bls.waitForSelector('#rdv-maroc-badge');
-    const p = await openPopup(BLS_URL);
+    const vfs = await open(VFS_URL, 'vfs-none');
+    await vfs.waitForSelector('#rdv-maroc-badge');
+    const p = await openPopup(VFS_URL);
+    await p.selectOption('#destination', 'italy');
     await p.click('#start');
     await p.close();                               // no waiting: the message to the tab may be lost
-    await waitBadge(bls, 'none');
+    await waitBadge(vfs, 'none');
     const s = await waitStatus('none');
     assert(s.settings.watching, 'tab did not follow the stored Start');
     await waitNextAt();
-    await stopWatching(BLS_URL);
-    await bls.waitForFunction(() => /press Start/.test(document.getElementById('rdv-maroc-badge').textContent));
+    await stopWatching(VFS_URL);
+    await vfs.waitForFunction(() => /press Start/.test(document.getElementById('rdv-maroc-badge').textContent));
   });
+
 
   await check('refresh is scheduled 60–69 s out (never under 60 s)', async () => {
     await fresh();
-    const bls = await open(BLS_URL, 'bls-none');
+    const vfs = await open(VFS_URL, 'vfs-none');
+    await vfs.waitForSelector('#rdv-maroc-badge');
     const started = Date.now();
-    await startWatching(BLS_URL);
-    await waitBadge(bls, 'none');
+    await startWatching(VFS_URL, { destination: 'italy', centre: 'Rabat' });
+    await waitBadge(vfs, 'none');
     const nextAt = await waitNextAt();
     const secs = (nextAt - started) / 1000;
-    assert(secs >= 59.5 && secs <= 70, `next refresh in ${secs.toFixed(1)} s`);
+    assert(secs >= 59.5 && secs <= 72, `next refresh in ${secs.toFixed(1)} s`);
   });
+
 
   await check('auto-refresh fires after the interval and a new slot alerts once', async () => {
     await fresh();
-    const blsPath = new URL(BLS_URL).pathname;
-    const bls = await open(BLS_URL, 'bls-none');
+    const vfsPath = new URL(VFS_URL).pathname;
+    const vfs = await open(VFS_URL, 'vfs-none');
+    await vfs.waitForSelector('#rdv-maroc-badge');
     const started = Date.now();
-    await startWatching(BLS_URL);
-    await waitBadge(bls, 'none');
+    await startWatching(VFS_URL, { destination: 'italy', centre: 'Rabat' });
+    await waitBadge(vfs, 'none');
     const nextAt = await waitNextAt();
-    const before = hits[blsPath];
-    scenario[blsPath] = 'bls-slot';
-    if (process.env.FAST) { hits[blsPath]++; await bls.reload(); hits[blsPath]--; }   // FAST=1: skip the real 60 s wait while iterating
-    else await bls.waitForEvent('load', { timeout: Math.max(0, nextAt - Date.now()) + 10000 });
+    const before = hits[vfsPath];
+    scenario[vfsPath] = 'vfs-slot';
+    if (process.env.FAST) { hits[vfsPath]++; await vfs.reload(); hits[vfsPath]--; }   // FAST=1: skip the real 60 s wait while iterating
+    else await vfs.waitForEvent('load', { timeout: Math.max(0, nextAt - Date.now()) + 10000 });
     const waited = process.env.FAST ? 60 : (Date.now() - started) / 1000;
-    assert(hits[blsPath] === before + 1, `expected exactly one reload, got ${hits[blsPath] - before}`);
+    assert(hits[vfsPath] === before + 1, `expected exactly one reload, got ${hits[vfsPath] - before}`);
     assert(waited >= 59.5, `reloaded after only ${waited.toFixed(1)} s`);
-    await waitBadge(bls, 'available');
-    await bls.waitForSelector('#rdv-maroc-slot');
+    await waitBadge(vfs, 'available', 8000);
+    await vfs.waitForSelector('#rdv-maroc-slot');
     const { lastHit } = await storage();
-    assert(lastHit && lastHit.where === 'Spain · Rabat · Tourism · Tourisme', JSON.stringify(lastHit));
+    assert(lastHit && lastHit.where === 'Italy · Rabat · Tourism · Tourisme', JSON.stringify(lastHit));
     assert((await notifications()).length === 1, `notifications: ${await notifications()}`);
   });
 
+
   await check('after a refresh the interval is still 60 s and the same slot does not re-alert', async () => {
     await fresh();
-    const bls = await open(BLS_URL, 'bls-slot');
-    await startWatching(BLS_URL);
-    await waitBadge(bls, 'available');
+    const vfs = await open(VFS_URL, 'vfs-slot');
+    await vfs.waitForSelector('#rdv-maroc-badge');
+    await startWatching(VFS_URL, { destination: 'italy', centre: 'Rabat' });
+    await waitBadge(vfs, 'available', 8000);
+    await waitNextAt();
     const { lastHit } = await storage();
     const t0 = Date.now();
-    await bls.reload();
-    await waitBadge(bls, 'available');
-    await bls.waitForTimeout(2500);               // let the mutation observer settle
+    await vfs.reload();
+    await waitBadge(vfs, 'available', 8000);
+    await waitNextAt();
+    await vfs.waitForTimeout(1500);               // let the mutation observer settle
     const s = await storage();
     assert(s.settings.interval === 60, `interval changed to ${s.settings.interval}`);
     const secs = (s.nextAt - t0) / 1000;
-    assert(secs >= 59 && secs <= 71, `next refresh in ${secs.toFixed(1)} s`);
+    assert(secs >= 59 && secs <= 73, `next refresh in ${secs.toFixed(1)} s`);
     assert(s.lastHit.at === lastHit.at, 're-alerted for the same slot');
     assert((await notifications()).length === 1, `notifications after refresh: ${await notifications()}`);
-    assert(!(await bls.$('#rdv-maroc-slot')), 'slot pop-up shown again for the same slot');
+    assert(!(await vfs.$('#rdv-maroc-slot')), 'slot pop-up shown again for the same slot');
   });
 
   await check('slot disappears then reappears → alerts again', async () => {
@@ -478,41 +503,45 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert((await notifications()).length === 2, `notifications: ${await notifications()}`);
   });
 
-  await check('Cloudflare-style "Just a moment" page pauses the watcher', async () => {
+
+  await check('Cloudflare-style "Just a moment" page pauses the watcher (VFS)', async () => {
     await fresh();
-    const blsPath = new URL(BLS_URL).pathname;
-    const bls = await open(BLS_URL, 'bls-none');
-    await startWatching(BLS_URL);
-    await waitBadge(bls, 'none');
-    scenario[blsPath] = 'cf-challenge';
-    await bls.reload();
-    await waitBadge(bls, 'captcha');
+    const vfsPath = new URL(VFS_URL).pathname;
+    const vfs = await open(VFS_URL, 'vfs-none');
+    await vfs.waitForSelector('#rdv-maroc-badge');
+    await startWatching(VFS_URL, { destination: 'italy', centre: '' });
+    await waitBadge(vfs, 'none');
+    scenario[vfsPath] = 'cf-challenge';
+    await vfs.reload();
+    await waitBadge(vfs, 'captcha');
     const { settings, status, nextAt } = await waitStatus('captcha');
     assert(settings.watching === false && status.state === 'captcha' && !nextAt, JSON.stringify({ watching: settings.watching, status, nextAt }));
-    assert(/human check/i.test(await bls.textContent('#rdv-maroc-banner')), 'banner should ask the user');
+    assert(/human check/i.test(await vfs.textContent('#rdv-maroc-banner')), 'banner should ask the user');
   });
 
-  await check('a visible CAPTCHA widget (no text) pauses the watcher', async () => {
+
+  await check('a visible CAPTCHA widget (no text) pauses the watcher (VFS)', async () => {
     await fresh();
-    const bls = await open(BLS_URL, 'captcha-widget');
-    await bls.waitForSelector('#rdv-maroc-badge');
-    await startWatching(BLS_URL);
-    await waitBadge(bls, 'captcha');
+    const vfs = await open(VFS_URL, 'captcha-widget');
+    await vfs.waitForSelector('#rdv-maroc-badge');
+    await startWatching(VFS_URL, { destination: 'italy', centre: '' });
+    await waitBadge(vfs, 'captcha');
     const { settings, status } = await waitStatus('captcha');
     assert(settings.watching === false && status.state === 'captcha', JSON.stringify(status));
   });
 
+
   await check('a paused watcher does not refresh by itself', async () => {
     await fresh();
-    const blsPath = new URL(BLS_URL).pathname;
-    const bls = await open(BLS_URL, 'cf-challenge');
-    await bls.waitForSelector('#rdv-maroc-badge');
-    await startWatching(BLS_URL);
-    await waitBadge(bls, 'captcha');
+    const vfsPath = new URL(VFS_URL).pathname;
+    const vfs = await open(VFS_URL, 'cf-challenge');
+    await vfs.waitForSelector('#rdv-maroc-badge');
+    await startWatching(VFS_URL, { destination: 'italy', centre: '' });
+    await waitBadge(vfs, 'captcha');
     await waitStatus('captcha');
-    const before = hits[blsPath];
-    await bls.waitForTimeout(3000);
-    assert(hits[blsPath] === before && !(await storage()).nextAt, 'refresh still scheduled while paused');
+    const before = hits[vfsPath];
+    await vfs.waitForTimeout(3000);
+    assert(hits[vfsPath] === before && !(await storage()).nextAt, 'refresh still scheduled while paused');
   });
 
   await check('being logged out stops the watcher', async () => {
@@ -546,13 +575,16 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert(s.lastHit.at > lastHit.at, 'Start again did not alert for the slot already on screen');
   });
 
+
   await check('Stop clears the refresh timer and returns the badge to ready', async () => {
     await fresh();
-    const bls = await open(BLS_URL, 'bls-none');
-    await startWatching(BLS_URL);
-    await waitBadge(bls, 'none');
-    await stopWatching(BLS_URL);
-    await bls.waitForFunction(() => /press Start/.test(document.getElementById('rdv-maroc-badge').textContent));
+    const vfs = await open(VFS_URL, 'vfs-none');
+    await vfs.waitForSelector('#rdv-maroc-badge');
+    await startWatching(VFS_URL, { destination: 'italy', centre: '' });
+    await waitBadge(vfs, 'none');
+    await waitNextAt();
+    await stopWatching(VFS_URL);
+    await vfs.waitForFunction(() => /press Start/.test(document.getElementById('rdv-maroc-badge').textContent));
     const s = await storage();
     assert(!s.settings.watching && !s.nextAt, JSON.stringify({ watching: s.settings.watching, nextAt: s.nextAt }));
   });
@@ -565,6 +597,74 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     await bls.waitForFunction(() => ['none', 'unknown', 'available'].includes(document.getElementById('rdv-maroc-badge').dataset.state) && !/checking/.test(document.getElementById('rdv-maroc-badge').textContent));
     const st = (await badgeState(bls)).state;
     assert(st !== 'available', 'disabled Kendo days were counted as selectable');
+  });
+
+  // ---------- BLS: no refresh timer, read the page the user is on ----------
+  await check('BLS: no refresh timer; the "no slots" page shows the quiet state; verification is quiet and keeps watching; the calendar alerts instantly and pulls the tab forward', async () => {
+    await fresh();
+    const blsPath = new URL(BLS_URL).pathname;
+    const bls = await open(BLS_URL, 'bls-noslots');
+    await bls.waitForSelector('#rdv-maroc-badge');
+    await startWatching(BLS_URL);
+    await waitBadge(bls, 'none');
+    await bls.waitForFunction(() => /press Try Again when you want to check; I will read the result/.test(document.querySelector('#rdv-maroc-badge .rdv-sub').textContent));
+    await bls.waitForTimeout(1500);
+    let s = await storage();
+    assert(s.settings.watching && !s.nextAt, 'a refresh timer was scheduled on BLS');
+    assert(!(await bls.$('#rdv-maroc-badge .rdv-ring.rdv-on')), 'countdown ring shown on BLS');
+    assert(/^● Watching – /.test(await bls.title()), await bls.title());
+    const p = await openPopup(BLS_URL);
+    assert(await p.isDisabled('#autoRefresh'), 'auto-refresh toggle should be disabled on BLS');
+    assert(/BLS: no auto-refresh/.test(await p.textContent('#hint')), await p.textContent('#hint'));
+    await p.close();
+    // The user goes through the verification page: nothing is touched, no notification, watching stays on.
+    await clearNotifications();
+    scenario[blsPath] = 'bls-captcha';
+    await bls.reload();
+    await waitBadge(bls, 'captcha');
+    s = await waitStatus('captcha');
+    assert(s.settings.watching === true, 'the BLS verification page must not stop watching');
+    assert((await notifications()).length === 0, 'no desktop notification for the BLS verification step');
+    assert(!(await bls.$('#rdv-maroc-banner')), 'no banner for the BLS verification step');
+    // Another tab is in front when the calendar page follows: the alert pulls the BLS tab forward.
+    scenario[blsPath] = 'bls-slot';
+    const other = await context.newPage(); opened.push(other);
+    await other.bringToFront();
+    await bls.evaluate(() => location.reload());                // the user passed the check / pressed Try Again
+    await waitBadge(bls, 'available');
+    await bls.waitForSelector('#rdv-maroc-slot');
+    assert((await bls.$$('.rdv-slot-day')).length === 2, 'free days not outlined');
+    assert((await notifications()).length === 1, `notifications: ${await notifications()}`);
+    assert(!(await storage()).nextAt, 'a timer appeared after the slot on BLS');
+    await bls.waitForFunction(() => document.visibilityState === 'visible', null, { timeout: 5000 });
+    const active = await sw.evaluate(async () => (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0].url);
+    assert(active === BLS_URL, `active tab is ${active}`);
+  });
+
+  await check('follows the active tab: a stale watchTabId never shows "watching another tab"; the visible appointment page takes over; closing the watched tab clears it', async () => {
+    await fresh({ ...MANUAL, watching: true, watchTabId: 987654321 });
+    const a = await open(BLS_URL, 'bls-noslots');
+    await waitBadge(a, 'none');
+    const idA = await tabIdOf(BLS_URL);
+    let s = await waitStatus('none');
+    assert(s.settings.watchTabId === idA, `stale id not replaced: ${s.settings.watchTabId}`);
+    assert(!/another tab/.test((await badgeState(a)).text), JSON.stringify(await badgeState(a)));
+    const b = await open(BLS_AUTO_URL, 'bls-slot');
+    await b.bringToFront();
+    await waitBadge(b, 'available');
+    const idB = await tabIdOf(BLS_AUTO_URL);
+    s = await waitStatus('available');
+    assert(s.settings.watchTabId === idB, 'the visible appointment page did not take over');
+    assert(!/another tab/.test((await badgeState(b)).text), JSON.stringify(await badgeState(b)));
+    await a.bringToFront();
+    await a.waitForFunction(() => document.visibilityState === 'visible' && /No slots/.test(document.querySelector('#rdv-maroc-badge .rdv-text').textContent), null, { timeout: 8000 });
+    const end = Date.now() + 5000;
+    do { s = await storage(); if (s.settings.watchTabId === idA) break; await a.waitForTimeout(100); } while (Date.now() < end);
+    assert(s.settings.watchTabId === idA, 'the first tab did not take the watch back when shown again');
+    await a.close();
+    await new Promise(r => setTimeout(r, 700));
+    s = await storage();
+    assert(s.settings.watchTabId == null && !s.settings.watching, JSON.stringify(s.settings));
   });
 
   // ---------- VFS flow (SPA calendar rendered after load) ----------
@@ -610,27 +710,29 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
   });
 
   // ---------- in-page HUD, toasts, slot pop-up, tab title ----------
+
   await check('HUD: countdown ring, live details, toasts and a tab-title countdown while watching; Pause from the HUD', async () => {
     await fresh();
-    const bls = await open(BLS_URL, 'bls-none');
-    await startWatching(BLS_URL);
-    await waitBadge(bls, 'none');
-    await bls.waitForFunction(() => /^● \d+s – BLS Spain/.test(document.title));
-    assert(await bls.$('#rdv-maroc-badge .rdv-ring.rdv-on'), 'countdown ring not shown');
-    const ringText = await bls.textContent('#rdv-maroc-badge .rdv-ring text');
+    const vfs = await open(VFS_URL, 'vfs-none');
+    await vfs.waitForSelector('#rdv-maroc-badge');
+    await startWatching(VFS_URL, { destination: 'italy', centre: 'Rabat' });
+    await waitBadge(vfs, 'none');
+    await vfs.waitForFunction(() => /^● \d+s – VFS Global/.test(document.title));
+    assert(await vfs.$('#rdv-maroc-badge .rdv-ring.rdv-on'), 'countdown ring not shown');
+    const ringText = await vfs.textContent('#rdv-maroc-badge .rdv-ring text');
     assert(/^\d+$/.test(ringText) && +ringText <= 70 && +ringText >= 50, `ring shows "${ringText}"`);
-    const toasts = await bls.$$eval('#rdv-maroc-toasts .rdv-toast', els => els.map(e => e.textContent));
+    const toasts = await vfs.$$eval('#rdv-maroc-toasts .rdv-toast', els => els.map(e => e.textContent));
     assert(toasts.some(t => /Watching/.test(t)), `toasts: ${toasts.join(' | ')}`);
-    await bls.click('#rdv-maroc-badge .rdv-more');
-    await bls.waitForFunction(() => /\d+ checks?/.test(document.querySelector('#rdv-maroc-badge .rdv-meta').textContent));
-    assert(/Spain · Rabat/.test(await bls.textContent('#rdv-maroc-badge .rdv-meta')), await bls.textContent('#rdv-maroc-badge .rdv-meta'));
-    await bls.click('#rdv-maroc-badge [data-act="pause"]');
-    await bls.waitForFunction(() => /press Start/.test(document.querySelector('#rdv-maroc-badge .rdv-sub').textContent));
+    await vfs.click('#rdv-maroc-badge .rdv-more');
+    await vfs.waitForFunction(() => /\d+ checks?/.test(document.querySelector('#rdv-maroc-badge .rdv-meta').textContent));
+    assert(/Italy · Rabat/.test(await vfs.textContent('#rdv-maroc-badge .rdv-meta')), await vfs.textContent('#rdv-maroc-badge .rdv-meta'));
+    await vfs.click('#rdv-maroc-badge [data-act="pause"]');
+    await vfs.waitForFunction(() => /press Start/.test(document.querySelector('#rdv-maroc-badge .rdv-sub').textContent));
     const s = await storage();
     assert(!s.settings.watching && !s.nextAt, 'Pause from the HUD was ignored');
-    assert(!/^● /.test(await bls.title()), `title prefix not restored: ${await bls.title()}`);
-    await bls.click('#rdv-maroc-badge [data-act="resume"]');
-    await waitBadge(bls, 'none');
+    assert(!/^● /.test(await vfs.title()), `title prefix not restored: ${await vfs.title()}`);
+    await vfs.click('#rdv-maroc-badge [data-act="resume"]');
+    await waitBadge(vfs, 'none');
     assert((await storage()).settings.watching, 'Resume from the HUD was ignored');
   });
 

@@ -54,3 +54,4 @@ option:not(.unsupported) { color: var(--text); }
 .auto { margin-top: 6px; color: var(--muted); font-size: 11px; }
 .auto[data-auto="on"] #autoText { color: var(--green); }
 .linkbtn { border: 0; background: transparent; color: var(--info); cursor: pointer; font-size: 11px; padding: 0; text-decoration: underline; }
+.chk.off { opacity: .5; }

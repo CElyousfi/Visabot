@@ -140,6 +140,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     }
     if (msg.type === 'setBadge') { badge(msg.text || '', msg.color); reply({ ok: true }); return; }
     if (msg.type === 'openDashboard') { chrome.runtime.openOptionsPage(); reply({ ok: true }); return; }
+    if (msg.type === 'tabAlive') { let alive = false; try { alive = !!(await chrome.tabs.get(msg.tabId)); } catch (e) {} reply({ alive }); return; }
     reply({ ok: false });
   })();
   return true;
@@ -158,10 +159,22 @@ chrome.notifications.onClicked.addListener(async (id) => {
 // Keep the badge honest when the watched tab closes.
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   const { settings = {} } = await chrome.storage.local.get('settings');
-  if (settings.watchTabId === tabId && settings.watching) {
+  if (settings.watchTabId === tabId) {
+    const wasWatching = settings.watching;
     settings.watching = false;
-    await chrome.storage.local.set({ settings, status: { state: 'stopped', at: Date.now(), reason: 'tab closed' } });
+    settings.watchTabId = null;
+    await chrome.storage.local.set(wasWatching ? { settings, status: { state: 'stopped', at: Date.now(), reason: 'tab closed' } } : { settings });
     badge('', '#6b7280');
+  }
+});
+
+// Tab ids do not survive a browser restart: a stored one would point at a tab that no longer
+// exists and every portal page would think another tab is being watched.
+chrome.runtime.onStartup.addListener(async () => {
+  const { settings = {} } = await chrome.storage.local.get('settings');
+  if (settings.watchTabId != null || settings.watching) {
+    settings.watchTabId = null; settings.watching = false;
+    await chrome.storage.local.set({ settings, status: { state: 'stopped', at: Date.now(), reason: 'browser restarted' } });
   }
 });
 

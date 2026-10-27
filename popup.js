@@ -33,6 +33,8 @@ function renderDestination(settings) {
 function fmt(ts) { return ts ? new Date(ts).toLocaleTimeString() : '—'; }
 
 async function activeTab() {
+  const m = location.hash.match(/tab=(\d+)/);           // test harness: popup opened for a given tab
+  if (m) { try { return await chrome.tabs.get(+m[1]); } catch (e) { /* fall through */ } }
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
 }
@@ -148,6 +150,14 @@ async function init() {
 
   const tab = await activeTab();
   if (!isPortalUrl(tab && tab.url)) $('hint').textContent = 'Open your BLS or VFS appointment calendar in this tab first (log in yourself), then press Start.';
+  // BLS puts a verification before every look at the slots: no refresh timer there, ever.
+  if (tab && tab.url && /bls(spain|portugal|international)/i.test(new URL(tab.url).hostname)) {
+    $('autoRefresh').disabled = true;
+    $('autoRefresh').closest('label').classList.add('off');
+    $('autoRefresh').closest('label').title = 'Not possible on BLS: a verification sits before each check. Press Try Again on the portal when you want to check; the result is read.';
+    $('interval').disabled = true;
+    $('hint').textContent = 'BLS: no auto-refresh (verification before each check). Press Try Again on the portal yourself; I read the result and alert instantly.';
+  }
 
   // Changing destination / centre / category by hand switches off reading them from the page.
   $('destination').onchange = async () => { renderDestination({}); await persist({ auto: false }); };

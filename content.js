@@ -8,6 +8,9 @@
   window.__rdvMarocLoaded = true;
 
   const D = window.RDVDetect;
+  // BLS: a verification sits before every look at the slots, so there is no refresh timer here.
+  // The extension reads the page the user is on and alerts the instant the calendar shows.
+  const MANUAL_CHECK = D.isManualCheckHost(location.hostname);
   let settings = null;
   let myTabId = null;
   let timer = null;
@@ -362,7 +365,8 @@
     const bits = [
       [who, describeTarget()].filter(Boolean).join(' · '),
       `${hud.checks} check${hud.checks === 1 ? '' : 's'}${hud.lastCheckAt ? ` · last ${new Date(hud.lastCheckAt).toLocaleTimeString()}` : ''}`,
-      settings && settings.autoRefresh ? `refresh every ${Math.max(D.MIN_INTERVAL, Number(settings.interval) || 90)} s` : 'auto-refresh off',
+      MANUAL_CHECK ? 'BLS: no auto-refresh (verification before each look) – press Try Again yourself'
+        : settings && settings.autoRefresh ? `refresh every ${Math.max(D.MIN_INTERVAL, Number(settings.interval) || 90)} s` : 'auto-refresh off',
       hud.slotsSeen ? `${hud.slotsSeen} slot alert${hud.slotsSeen === 1 ? '' : 's'} this session` : '',
     ].filter(Boolean);
     b.querySelector('.rdv-meta').textContent = bits.join('\n');
@@ -542,6 +546,12 @@
       stopTimer();
       closeSlotPopup();
       highlightSlots(document.body, false);
+      if (MANUAL_CHECK) {
+        // Part of every BLS check, so no notification and watching stays on: the next page is read.
+        setBadge('captcha', 'Your turn', 'verification – I never touch it; I read the page that follows');
+        await publishStatus({ state: res.state, reasons: res.reasons, dates: [] });
+        return;
+      }
       setBadge('captcha', 'Needs you', 'Solve the verification; I resume when the calendar is back');
       banner('RDV Maroc – your turn', 'The page is asking for a human check. Solve it yourself; I never fill these in. I start watching again as soon as the calendar shows.');
       await send({ type: 'notify', title: 'RDV Maroc: human check needed', body: 'Solve the verification on the portal. Watching resumes by itself afterwards.', urgent: false });
@@ -602,7 +612,9 @@
       }
       highlightSlots(document.body, false);
       closeSlotPopup();
-      setBadge(res.state, label, trigger === 'reload' ? 'checked after refresh' : 'checked');
+      const sub = MANUAL_CHECK && res.state === 'none' ? 'press Try Again when you want to check; I will read the result'
+        : trigger === 'reload' ? 'checked after refresh' : 'checked';
+      setBadge(res.state, label, sub);
     }
 
     await publishStatus({ state: res.state, reasons: res.reasons, dates: res.dates });
@@ -628,7 +640,7 @@
 
   function scheduleReload() {
     stopTimer();
-    if (!settings.autoRefresh) return;
+    if (!settings.autoRefresh || MANUAL_CHECK) return;
     const secs = D.reloadDelaySeconds(settings.interval, Math.random());
     nextAt = Date.now() + secs * 1000;
     store({ nextAt });
@@ -737,6 +749,17 @@
   function watchedElsewhere() {
     return settings.watching && settings.watchTabId != null && myTabId != null && settings.watchTabId !== myTabId;
   }
+  const hasCalendar = (snap, res) => snap.totalDays >= 7 || snap.optionCount > 0 || res.state === 'available' || res.state === 'none';
+  function aboutAppointments(snap) {
+    if (settings.selector || snap.optionCount > 0) return true;
+    const words = `${location.href} ${document.title} ${[...document.querySelectorAll('h1, h2, h3, h4, legend')].map(e => e.textContent).join(' ')}`;
+    return D.hasAppointmentVocabulary(words);
+  }
+  /** The calendar or the "no slots" box: the page where the watched tab should be. */
+  function isAppointmentPage() {
+    const snap = snapshot();
+    return hasCalendar(snap, D.classify(snap)) && aboutAppointments(snap);
+  }
 
   /** Start by itself when this tab shows a calendar: no button to press. */
   async function tryAutoStart(opts = {}) {
@@ -747,17 +770,15 @@
     if (settings.manualStopUrl && settings.manualStopUrl === location.href) { idle('unknown', 'RDV Maroc', 'stopped – press Start to watch again'); return false; }
     const snap = snapshot();
     const res = D.classify(snap);
-    const calendar = snap.totalDays >= 7 || snap.optionCount > 0 || res.state === 'available' || res.state === 'none';
     if (res.state === 'captcha') { idle('captcha', 'Needs you', 'solve the verification; I resume after'); return false; }
     if (res.state === 'login') { idle('login', 'Logged out', 'log in and open the calendar; I resume after'); return false; }
     // Only pages about appointments start by themselves; a form page with date pickers does not.
     // An area the user picked, or a real slot list, is trusted. Start in the popup always works.
-    const pageWords = `${location.href} ${document.title} ${[...document.querySelectorAll('h1, h2, h3, h4, legend')].map(e => e.textContent).join(' ')}`;
-    if (!settings.selector && !(snap.optionCount > 0) && !D.hasAppointmentVocabulary(pageWords)) {
+    if (!aboutAppointments(snap)) {
       idle('unknown', 'RDV Maroc', 'waiting for an appointment calendar – press Start if this is it');
       return false;
     }
-    if (!calendar) { idle('unknown', 'RDV Maroc', 'waiting for a calendar on this page'); return false; }
+    if (!hasCalendar(snap, res)) { idle('unknown', 'RDV Maroc', 'waiting for a calendar on this page'); return false; }
     await patchSettings({ watching: true, watchTabId: myTabId, autoStarted: true, manualStopUrl: '' });
     await store({ status: { state: 'unknown', at: Date.now(), tabId: myTabId, url: location.href } });
     await applyPageContext();
@@ -772,9 +793,17 @@
     settings = await readSettings();
     if (await checkBooking()) { startObserver(); return; }
     if (watchedElsewhere()) {
-      setBadge('unknown', 'RDV Maroc', 'watching another tab');
-      stopObserver(); stopTimer();
-      return;
+      // The tab you are looking at wins: if it shows the appointment page, or the other tab is
+      // gone (closed, or a stale id from before a restart), watching moves here.
+      const r = await send({ type: 'tabAlive', tabId: settings.watchTabId });
+      const alive = !!(r && r.alive);
+      if (document.visibilityState === 'visible' && (!alive || isAppointmentPage())) {
+        await patchSettings({ watchTabId: myTabId });
+      } else {
+        setBadge('unknown', 'RDV Maroc', document.visibilityState === 'visible' ? 'ready – open the appointment page here to watch it' : 'watching in another tab');
+        stopObserver(); stopTimer();
+        return;
+      }
     }
     if (!settings.watching) {
       stopTimer();
@@ -797,6 +826,8 @@
   // re-arms the alert; our own writes and the duplicate message trigger are coalesced into one start.
   let startTimer = null;
   function requestStart() { clearTimeout(startTimer); startTimer = setTimeout(start, 80); }
+  // Switching to this tab: it may take over the watch (see start()).
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') requestStart(); });
   const WATCH_KEYS = ['watching', 'watchTabId', 'selector', 'interval', 'autoRefresh', 'autoStart', 'manualStopUrl', 'pauseOnHit'];
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !changes.settings) return;

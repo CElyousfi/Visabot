@@ -241,6 +241,11 @@
     return out;
   }
 
+  // ---------- portals that put a verification before every look at the slots ----------
+  // On BLS the slot page is only reached through the number-grid check, so the extension must not
+  // refresh by itself there: it reads whatever page the user is on. VFS keeps the auto-refresh.
+  function isManualCheckHost(hostname) { return /bls(spain|portugal|international)/i.test(hostname || ''); }
+
   // ---------- which calendars are the appointment calendar ----------
   // Application forms have date pickers too (birth date, passport dates, travel dates). A picker
   // bound to one of those fields is not the appointment calendar, however many days it offers.
@@ -291,7 +296,7 @@
     };
   }
 
-  const api = { classify, extractDates, hash, norm, reloadDelaySeconds, detectContext, detectBooking, hasAppointmentVocabulary, isFormDateField, MIN_INTERVAL, NO_SLOT_PHRASES, SLOT_PHRASES, CAPTCHA_MARKERS, LOGIN_MARKERS };
+  const api = { classify, extractDates, hash, norm, reloadDelaySeconds, detectContext, detectBooking, hasAppointmentVocabulary, isFormDateField, isManualCheckHost, MIN_INTERVAL, NO_SLOT_PHRASES, SLOT_PHRASES, CAPTCHA_MARKERS, LOGIN_MARKERS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RDVDetect = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
