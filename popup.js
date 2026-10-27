@@ -146,7 +146,8 @@ function renderRelease(settings, ctx) {
     cd.textContent = ms <= 0 ? 'NOW – go!' : R.countdown(ms);
     cd.classList.toggle('soon', ms > 0 && ms <= 15 * 60000);
     cd.classList.toggle('now', ms <= 0 && ms > -30 * 60000);
-    $('relLine').textContent = `${nxt.line} · ${nxt.at.toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`;
+    const tag = nxt.verified === 'bls' ? '✓ confirmed on the BLS centre page' : nxt.verified === 'secondary' ? '⚠ not confirmed on the BLS page' : '';
+    $('relLine').textContent = `${nxt.line} · ${nxt.at.toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}${tag ? ` · ${tag}` : ''}`;
   } else {
     $('relWhen').textContent = `${centre}`;
     cd.textContent = '—'; cd.className = 'countdown';
@@ -162,7 +163,7 @@ function renderRelease(settings, ctx) {
   }
   const walk = R.WALK_INS.filter(w => w.dest === dest && w.centre.toLowerCase() === String(centre || '').toLowerCase());
   $('relWalkin').classList.toggle('hidden', !walk.length);
-  if (walk.length) $('relWalkin').textContent = `No appointment needed (walk-in ${walk[0].hours}): ${walk[0].who}.`;
+  if (walk.length) $('relWalkin').textContent = `Possible walk-in (${walk[0].hours}): ${walk[0].who}. Check with the centre first.`;
   const cl = $('checklist'); cl.innerHTML = '';
   for (const it of R.checklist(Object.assign({ now }, ctx))) {
     const li = document.createElement('li'); li.dataset.state = it.state; li.textContent = it.label; cl.appendChild(li);

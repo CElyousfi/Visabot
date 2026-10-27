@@ -134,16 +134,17 @@ release for your centre, the other lines (previous-visa holders, students), the 
 exists, and a "be ready before the minute" checklist (form completed, logged in, in position, details
 saved). With **Remind me** on, you get a notification 15 min and 1 min before, and at the minute.
 
-| Centre | Release (Moroccan time) |
-|---|---|
-| Casablanca | Sunday 10:00 |
-| Rabat | Saturday 13:00 · previous Schengen visa (last 4 years): Wednesday 16:00 · some students: Tuesday 17:00 |
-| Tétouan, Nador | Saturday 10:00 |
-| Tanger | Monday, time not published |
-| Agadir | not published |
+| Centre | Release (Moroccan time) | Source |
+|---|---|---|
+| Casablanca | Sunday 10:00 | BLS centre page |
+| Rabat | Saturday 13:00 · prior visa (valid under 1 year, issued since 2023): Wednesday 16:00 · non-university students: Tuesday 17:00 | BLS centre page |
+| Nador | Saturday 10:00 | BLS centre page + Nador consulate |
+| Tétouan | Saturday 10:00 | third-party guides only – unconfirmed |
+| Tanger | Monday, time not published | BLS centre page |
+| Agadir | not published | – |
 
-The schedule lives in `release.js`. Confirm it on the consulate's own page before relying on it; rules
-change, and the extension never acts at the release minute on your behalf.
+The schedule lives in `release.js`, read from blsspainmorocco.com on 27 Oct 2026. Re-check the centre page
+before release day; rules change, and the extension never acts at the release minute on your behalf.
 
 ## Development
 ```

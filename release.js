@@ -1,8 +1,8 @@
 /* release.js — when each BLS centre in Morocco releases its appointment slots, and the countdown
  * to the next one. Pure functions, shared by popup, HUD, dashboard, background and the tests.
  *
- * Source: the Spanish consulates' rules as published for each centre (Rabat consulate rules updated
- * 23 Oct 2026, relayed by assurvoyage.ma and hellosafe.ma). Times are Moroccan local time
+ * Source: BLS Spain Morocco's own centre pages (blsspainmorocco.com/<centre>/, read 27 Oct 2026) and
+ * the Nador consulate's appointment page; Tétouan only from third-party guides. Times are Moroccan local time
  * (Africa/Casablanca). "line" names who the release is for. Entries without a time are shown as
  * "time not published" and never scheduled. Confirm on the consulate's own page before relying on it. */
 (function (root) {
@@ -11,22 +11,28 @@
   const TZ = 'Africa/Casablanca';
   const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-  /* day: 0 = Sunday … 6 = Saturday. time: "HH:MM" local, or null when not published. */
+  /* day: 0 = Sunday … 6 = Saturday. time: "HH:MM" local, or null when not published.
+   * verified: 'bls' = read on blsspainmorocco.com's own centre page (27 Oct 2026); 'secondary' = only
+   * relayed by third-party guides; 'none' = nothing published. */
   const RELEASES = [
-    { dest: 'spain', centre: 'Casablanca', day: 0, time: '10:00', line: 'All applicants' },
-    { dest: 'spain', centre: 'Rabat',      day: 6, time: '13:00', line: 'All applicants (weekly quota)' },
-    { dest: 'spain', centre: 'Rabat',      day: 3, time: '16:00', line: 'Previous Schengen visa in the last 4 years' },
-    { dest: 'spain', centre: 'Rabat',      day: 2, time: '17:00', line: 'Some non-university students, no prior visa' },
-    { dest: 'spain', centre: 'Tétouan',    day: 6, time: '10:00', line: 'All applicants' },
-    { dest: 'spain', centre: 'Nador',      day: 6, time: '10:00', line: 'All applicants' },
-    { dest: 'spain', centre: 'Tanger',     day: 1, time: null,    line: 'All applicants – time not published' },
-    { dest: 'spain', centre: 'Agadir',     day: null, time: null, line: 'Release day not published' },
+    { dest: 'spain', centre: 'Casablanca', day: 0, time: '10:00', line: 'All applicants (CASA-1..4)', verified: 'bls' },
+    { dest: 'spain', centre: 'Rabat',      day: 6, time: '13:00', line: 'All applicants (weekly quota)', verified: 'bls' },
+    { dest: 'spain', centre: 'Rabat',      day: 3, time: '16:00', line: 'Prior Schengen visa, valid under 1 year, issued since 2023', verified: 'bls' },
+    { dest: 'spain', centre: 'Rabat',      day: 2, time: '17:00', line: 'Non-university students (language / vocational courses)', verified: 'bls' },
+    { dest: 'spain', centre: 'Nador',      day: 6, time: '10:00', line: 'All applicants (Nador consulate jurisdiction)', verified: 'bls' },
+    { dest: 'spain', centre: 'Tétouan',    day: 6, time: '10:00', line: 'All applicants – not confirmed on the BLS page', verified: 'secondary' },
+    { dest: 'spain', centre: 'Tanger',     day: 1, time: null,    line: 'Opened weekly every Monday – time not published', verified: 'bls' },
+    { dest: 'spain', centre: 'Agadir',     day: null, time: null, line: 'Release day not published', verified: 'none' },
   ];
 
-  /* Walk-in lines that need no appointment at all (Mon–Fri). Shown as a hint, never scheduled. */
+  /* Lines that may not need an online slot. BLS's own pages contradict themselves on several of these
+   * (one section allows walk-ins, another says nobody enters without an appointment), so each is a
+   * "check with the centre" hint, never a promise. Quoted from blsspainmorocco.com on 27 Oct 2026. */
   const WALK_INS = [
-    { dest: 'spain', centre: 'Rabat', hours: 'Mon–Fri 9:00–11:00', who: 'Schengen visa in the last 4 years (+ spouse, children under 18), family of EU/EEA/CH citizens, university students' },
-    { dest: 'spain', centre: 'Casablanca', hours: 'Mon–Fri 9:00–12:00 (CASA-3)', who: 'Previous-visa category' },
+    { dest: 'spain', centre: 'Rabat', hours: 'Mon–Fri 9:00–11:00 (weekly quota)', who: 'last Schengen visa of 1 year or more, issued within 4 years; university students and EU-citizen family are listed with 8:00–10:00 on the same page – confirm with BLS' },
+    { dest: 'spain', centre: 'Casablanca', hours: 'Mon–Fri 9:00–12:00', who: 'CASA-3 only (last visa a 1-year Schengen visa issued from 01-01-2022), "subject to the volume of applications each day" – another notice on the same page says no entry without an appointment, so confirm first' },
+    { dest: 'spain', centre: 'Tanger', hours: 'Mon–Thu 9:00–12:00 (Fri for visas over 3 years)', who: 'last visa valid at least 180 days within the last year, or over 1 year within the last 4 years; daily quota' },
+    { dest: 'spain', centre: 'Nador', hours: 'Fri 10:00–12:00', who: 'renewals: Schengen visa holders whose visa expired or expires within 3 months; depends on each Friday\'s volume' },
   ];
 
   const norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z]/g, '');
@@ -66,7 +72,7 @@
     const out = [];
     const p = partsIn(now);
     for (const rule of rulesFor(dest, centre)) {
-      if (rule.day == null || !rule.time) { out.push({ at: null, rule, dayName: rule.day == null ? null : DAYS[rule.day], time: null, line: rule.line }); continue; }
+      if (rule.day == null || !rule.time) { out.push({ at: null, rule, dayName: rule.day == null ? null : DAYS[rule.day], time: null, line: rule.line, verified: rule.verified }); continue; }
       const [hh, mm] = rule.time.split(':').map(Number);
       for (let add = 0; add < 8; add++) {
         const base = new Date(Date.UTC(p.y, p.m - 1, p.d + add));
@@ -74,7 +80,7 @@
         const wd = base.getUTCDay();
         if (wd !== rule.day) continue;
         const at = zoned(bp.y, bp.m, bp.d, hh, mm);
-        if (at.getTime() > now.getTime()) { out.push({ at, rule, dayName: DAYS[rule.day], time: rule.time, line: rule.line }); break; }
+        if (at.getTime() > now.getTime()) { out.push({ at, rule, dayName: DAYS[rule.day], time: rule.time, line: rule.line, verified: rule.verified }); break; }
       }
     }
     out.sort((a, b) => (a.at ? a.at.getTime() : Infinity) - (b.at ? b.at.getTime() : Infinity));

@@ -1290,14 +1290,14 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     const cd2 = await (async () => { await p.waitForTimeout(1100); return p.textContent('#relCountdown'); })();
     assert(cd2 !== cd, 'countdown must tick every second');
     const walk = await p.textContent('#relWalkin');
-    assert(/walk-in Mon–Fri 9:00–12:00/.test(walk), walk);
+    assert(/walk-in \(Mon–Fri 9:00–12:00\)/.test(walk) && /CASA-3/.test(walk), walk);
     const states = await p.$$eval('#checklist li', ls => ls.map(l => l.dataset.state));
     assert(states.length === 4 && states.every(x => x === 'unknown'), states.join(','));
     // Rabat shows three lines, soonest first, with the prior-visa and student lines named.
     await p.selectOption('#centre', 'Rabat');
     await p.waitForFunction(() => /Rabat/.test(document.getElementById('relWhen').textContent));
     const lines = await p.$$eval('#relList li', ls => ls.map(l => l.textContent));
-    assert(lines.length === 2 && lines.join(' ').includes('Previous Schengen visa') || lines.join(' ').includes('students'), lines.join(' | '));
+    assert(lines.length === 2 && lines.join(' ').includes('Prior Schengen visa') || lines.join(' ').includes('students'), lines.join(' | '));
     // A VFS centre has no published release: the card hides.
     await p.selectOption('#destination', 'italy');
     await p.waitForFunction(() => document.getElementById('releaseCard').classList.contains('hidden'));
