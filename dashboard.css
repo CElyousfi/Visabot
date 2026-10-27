@@ -275,3 +275,4 @@ button { font: inherit; color: inherit; }
 .readiness.warn { background: #fff1e6; color: #9a3412; border: 1px solid #fdba74; }
 .readiness.ok { background: var(--green-soft); color: var(--green); border: 1px solid #bfe8d0; }
 .readiness a { color: inherit; margin-left: auto; }
+.sec-btns { display: flex; gap: 6px; }

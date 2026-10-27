@@ -118,3 +118,10 @@ html.rdv-picking, html.rdv-picking * { cursor: crosshair !important; }
 }
 #rdv-maroc-warn .rdv-w-ic { width: 24px; height: 24px; border-radius: 50%; background: #fb923c; color: #431407; font-weight: 800; display: grid; place-items: center; flex: none; }
 #rdv-maroc-warn a { color: #fed7aa; font-weight: 600; }
+
+/* ---------- "Fill my details": what was filled (green) and what was left for you (amber) ---------- */
+.rdv-filled { outline: 2px solid #16a34a !important; outline-offset: 1px; background-color: #ecfdf5 !important; }
+.rdv-skipped { outline: 2px dashed #d97706 !important; outline-offset: 1px; background-color: #fffbeb !important; }
+#rdv-maroc-badge .rdv-fill { display: none; border: 0; background: #34d399; color: #052e16; font-weight: 700; padding: 6px 10px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+#rdv-maroc-badge.rdv-can-fill .rdv-fill { display: inline-block; }
+#rdv-maroc-badge .rdv-fill:hover { background: #6ee7b7; }

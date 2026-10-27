@@ -334,6 +334,7 @@
         <span class="rdv-dot"></span>
         <svg class="rdv-ring" viewBox="0 0 36 36" aria-hidden="true"><circle class="rdv-ring-bg" cx="18" cy="18" r="15.5"/><circle class="rdv-ring-fg" cx="18" cy="18" r="15.5"/><text x="18" y="22.5" text-anchor="middle"></text></svg>
         <span class="rdv-text">RDV Maroc</span><span class="rdv-sub"></span>
+        <button type="button" class="rdv-fill" data-act="fill" title="Fill this form from your saved details. Nothing is submitted.">Fill my details</button>
         <button type="button" class="rdv-more" title="Details">▾</button>
       </div>
       <div class="rdv-details">
@@ -347,6 +348,7 @@
         </div>
       </div>`;
     b.querySelector('.rdv-more').onclick = () => { hud.expanded = !hud.expanded; b.classList.toggle('rdv-open', hud.expanded); renderMeta(); };
+    b.querySelector('.rdv-fill').onclick = () => hudAction('fill');
     b.querySelector('.rdv-actions').onclick = e => { const act = e.target.dataset && e.target.dataset.act; if (act) hudAction(act); };
     document.documentElement.appendChild(b);
     return b;
@@ -428,6 +430,74 @@
     else if (act === 'resume') { lastFingerprint = null; lastAlertAt = 0; await saveAlertState(); await patchSettings({ watching: true, watchTabId: myTabId, manualStopUrl: '', autoStarted: false }); requestStart(); }
     else if (act === 'mute') { stopRinging(); if (audio) { try { audio.pause(); } catch (e) {} } toast('info', 'Sound stopped for this slot', { ms: 2500 }); }
     else if (act === 'dash') send({ type: 'openDashboard' });
+    else if (act === 'fill') {
+      settings = await readSettings();
+      const app = await linkedApplication();
+      if (!app) { toast('warn', 'No application in the dashboard yet – add your details there first', { ms: 6000 }); return; }
+      if (app.applicantLocked) { toast('warn', 'Details are locked: open the dashboard, unlock, and use its "Fill the portal form" button', { ms: 7000 }); return; }
+      reportFill(fillForm(app.applicant || {}));
+    }
+  }
+
+  // ---------- "Fill my details": on your click only ----------
+  // Writes your saved details into matching text / select fields and fires input + change events so
+  // the page's own scripts see them. It never submits, never presses a button, and never touches
+  // password or verification fields. Filled fields turn green, skipped ones amber (reason in tooltip).
+  function fillableControls() {
+    return [...document.querySelectorAll('input, select, textarea')].filter(el => {
+      if (el.closest('[id^="rdv-maroc"]')) return false;
+      const type = (el.type || 'text').toLowerCase();
+      if (['hidden', 'password', 'submit', 'button', 'reset', 'file', 'checkbox', 'radio', 'image'].includes(type)) return false;
+      if (el.disabled) return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 || r.height > 0;
+    });
+  }
+  function fillableCount() {
+    let n = 0;
+    for (const el of fillableControls()) if (D.matchFormField(fieldLabel(el))) n++;
+    return n;
+  }
+  function updateFillButton() {
+    const b = $('#rdv-maroc-badge');
+    if (b) b.classList.toggle('rdv-can-fill', fillableCount() >= 3);
+  }
+  const DATE_KEYS = ['birthDate', 'passportExpiry', 'passportIssue'];
+  function setNative(el, value) {
+    const d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
+    if (d && d.set) d.set.call(el, value); else el.value = value;
+  }
+  function fire(el) { for (const t of ['input', 'change']) el.dispatchEvent(new Event(t, { bubbles: true })); }
+  function fillForm(ap) {
+    const filled = [], skipped = [];
+    for (const el of fillableControls()) {
+      const label = fieldLabel(el);
+      const key = D.matchFormField(label);
+      if (!key) continue;
+      const mark = (cls, why) => { el.classList.remove('rdv-filled', 'rdv-skipped'); el.classList.add(cls); el.title = why; };
+      const raw = ap[key];
+      if (!raw) { skipped.push(key); mark('rdv-skipped', `RDV Maroc: no saved value for "${key}" – fill it yourself`); continue; }
+      if (el.readOnly) { skipped.push(key); mark('rdv-skipped', 'RDV Maroc: read-only field – use the page\'s own picker'); continue; }
+      if (el.tagName === 'SELECT') {
+        const i = D.matchOption([...el.options].map(o => o.textContent), raw);
+        if (i < 0) { skipped.push(key); mark('rdv-skipped', `RDV Maroc: no option matches "${raw}" – choose it yourself`); continue; }
+        el.selectedIndex = i;
+        fire(el);
+      } else {
+        let v = String(raw);
+        if (DATE_KEYS.includes(key)) v = el.type === 'date' ? raw : D.formatDate(raw, D.dateFormatHint(`${el.placeholder || ''} ${el.getAttribute('pattern') || ''} ${el.dataset.format || ''} ${label}`));
+        else if (key === 'sex' || key === 'maritalStatus') v = v.replace(/\s*\(.*?\)\s*/g, ' ').trim();
+        setNative(el, v);
+        fire(el);
+      }
+      filled.push(key);
+      mark('rdv-filled', 'RDV Maroc: filled from your saved details – check it');
+    }
+    return { filled, skipped };
+  }
+  function reportFill(r) {
+    const n = r.filled.length;
+    toast(n ? 'ok' : 'warn', `Filled ${n} field${n === 1 ? '' : 's'}${r.skipped.length ? `, skipped ${r.skipped.length} (no saved value or no matching option)` : ''}. Nothing submitted – check the form and submit it yourself.`, { ms: 8000 });
   }
 
   /** The dashboard application this tab's alerts are filed under (for the copy strip). */
@@ -700,6 +770,7 @@
       clearTimeout(t);
       t = setTimeout(async () => {
         checkReadiness();
+        updateFillButton();
         if (await checkBooking()) return;
         if (settings && settings.watching) evaluate('mutation'); else tryAutoStart();
       }, MUTATION_DEBOUNCE_MS);
@@ -818,6 +889,8 @@
     settings = await readSettings();
     await checkReadiness();
     renderReadiness();
+    ensureBadge();
+    updateFillButton();
     if (await checkBooking()) { startObserver(); return; }
     if (watchedElsewhere()) {
       // The tab you are looking at wins: if it shows the appointment page, or the other tab is
@@ -872,6 +945,7 @@
       else if (msg.type === 'checkNow') { settings = await readSettings(); await evaluate('manual'); reply({ ok: true }); }
       else if (msg.type === 'ping') reply({ ok: true, url: location.href, tabId: myTabId });
       else if (msg.type === 'pageContext') { settings = await readSettings(); reply({ ok: true, context: await applyPageContext() }); }
+      else if (msg.type === 'fillForm') { const r = fillForm(msg.applicant || {}); reportFill(r); reply(Object.assign({ ok: true }, r)); }
       else reply({ ok: false });
     })();
     return true;

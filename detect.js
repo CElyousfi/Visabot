@@ -257,6 +257,63 @@
     return null;
   }
 
+  // ---------- "Fill my details": which saved value belongs in which form field ----------
+  // Only on the user's click. More specific rules come first (expiry before passport number,
+  // place of birth before date of birth, given name before surname because "prénom" contains "nom").
+  const FILL_RULES = [
+    ['passportExpiry', /passport.*(expir|valid until)|expir.*passport|\bexpir(y|ation|e)\b|date d.expiration|validit[ée] du passeport/],
+    ['passportIssuePlace', /(place|lieu|authority|autorit)\s*(of)?\s*(issue|d[ée]livr)|issued (at|by)|issuing authority/],
+    ['passportIssue', /passport.*(issue|d[ée]livr)|(issue|d[ée]livr).*passport|date of issue|issuing date|issued on|date de d[ée]livrance/],
+    ['birthPlace', /(place|city|town|lieu|ville)\s*(of)?\s*birth|birth\s*place|lieu de naissance|ciudad de nacimiento/],
+    ['birthDate', /date of birth|birth\s*date|\bdob\b|date de naissance|fecha de nacimiento|\bborn on\b/],
+    ['givenName', /given ?names?|first ?names?|forename|pr[ée]noms?|\bnombre\b|firstname/],
+    ['surname', /surname|last ?name|family name|\bnom\b|apellidos?|lastname/],
+    ['sex', /\bgender\b|\bsex\b|\bsexe\b|\bsexo\b/],
+    ['maritalStatus', /marital|civil status|[ée]tat civil|estado civil/],
+    ['nationality', /nationality|nationalit[ée]|citizenship|nacionalidad/],
+    ['email', /e-?mail|courriel|correo/],
+    ['phone', /\bphone\b|mobile|\btel\b|t[ée]l[ée]phone|gsm|\bcell\b|contact number|portable/],
+    // Last: "Surname (as in passport)" must not become the passport number.
+    ['passport', /passport|passeport|pasaporte|travel document/],
+  ];
+  // Never touched: credentials and anything that is part of a verification.
+  const FILL_SKIP = /password|mot de passe|captcha|verif|\botp\b|\bcode\b|token|grid|security|secret/;
+  function matchFormField(label) {
+    const t = norm(label);
+    if (!t || FILL_SKIP.test(t)) return null;
+    for (const [key, re] of FILL_RULES) if (re.test(t)) return key;
+    return null;
+  }
+  /** The date format a field expects, from its placeholder / pattern / label. BLS uses DD/MM/YYYY. */
+  function dateFormatHint(text) {
+    const t = norm(text);
+    if (/yyyy-mm-dd/.test(t)) return 'yyyy-mm-dd';
+    if (/mm\/dd\/yyyy/.test(t)) return 'mm/dd/yyyy';
+    if (/dd-mm-yyyy/.test(t)) return 'dd-mm-yyyy';
+    if (/dd\.mm\.yyyy/.test(t)) return 'dd.mm.yyyy';
+    return 'dd/mm/yyyy';
+  }
+  function formatDate(iso, fmt) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+    if (!m) return iso || '';
+    return (fmt || 'dd/mm/yyyy').replace('yyyy', m[1]).replace('mm', m[2]).replace('dd', m[3]);
+  }
+  /** Index of the <option> that best matches a saved value, or -1: exact, then prefix ("MOROCCO" for "Moroccan"), then the code in brackets ("Male (M)"). */
+  function matchOption(optionTexts, value) {
+    const full = norm(value);
+    const v = full.replace(/\s*\(.*?\)\s*/g, ' ').trim();
+    if (!v) return -1;
+    const texts = optionTexts.map(o => norm(o));
+    let i = texts.findIndex(t => t === v);
+    if (i >= 0) return i;
+    i = texts.findIndex(t => t.length >= 3 && (t.startsWith(v) || v.startsWith(t)));
+    if (i >= 0) return i;
+    if (v.length >= 5) { i = texts.findIndex(t => t.slice(0, 5) === v.slice(0, 5)); if (i >= 0) return i; }
+    const code = (full.match(/\(([a-z0-9]{1,2})\)/) || [])[1];
+    if (code) { i = texts.findIndex(t => t === code); if (i >= 0) return i; }
+    return -1;
+  }
+
   // ---------- which calendars are the appointment calendar ----------
   // Application forms have date pickers too (birth date, passport dates, travel dates). A picker
   // bound to one of those fields is not the appointment calendar, however many days it offers.
@@ -307,7 +364,7 @@
     };
   }
 
-  const api = { classify, extractDates, hash, norm, reloadDelaySeconds, detectContext, detectBooking, hasAppointmentVocabulary, isFormDateField, isManualCheckHost, detectReadiness, MIN_INTERVAL, NO_SLOT_PHRASES, SLOT_PHRASES, CAPTCHA_MARKERS, LOGIN_MARKERS };
+  const api = { classify, extractDates, hash, norm, reloadDelaySeconds, detectContext, detectBooking, hasAppointmentVocabulary, isFormDateField, isManualCheckHost, detectReadiness, matchFormField, dateFormatHint, formatDate, matchOption, MIN_INTERVAL, NO_SLOT_PHRASES, SLOT_PHRASES, CAPTCHA_MARKERS, LOGIN_MARKERS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RDVDetect = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

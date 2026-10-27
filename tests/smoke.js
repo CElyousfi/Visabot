@@ -122,8 +122,47 @@ function blsManage(status) {
     '', '<header><a href="#">Logout</a></header>');
 }
 
+/** BLS "Add New Member" applicant form, sections 1–14. Only sections 1–3 hold details we save. */
+function blsMemberForm() {
+  const field = (id, label, extra = '') => `<div class="form-group"><label for="${id}">${label}</label><input id="${id}" name="${id}" ${extra}></div>`;
+  const select = (id, label, opts) => `<div class="form-group"><label for="${id}">${label}</label><select id="${id}" name="${id}"><option value="">Select</option>${opts.map(o => Array.isArray(o) ? `<option value="${o[0]}">${o[1]}</option>` : `<option>${o}</option>`).join('')}</select></div>`;
+  return page('Add New Member', `
+    <h2>Add New Member</h2>
+    <form id="memberForm" method="post" action="/MAR/applicant/addmember">
+      <fieldset><legend>1. Personal Details</legend>
+        ${field('Surname', 'Surname (as in passport)')}${field('FirstName', 'First Name')}
+        ${select('Gender', 'Gender', [['M', 'Male'], ['F', 'Female']])}${select('MaritalStatus', 'Marital Status', ['Single', 'Married', 'Divorced', 'Widowed'])}
+        ${field('DateOfBirth', 'Date of Birth', 'placeholder="DD/MM/YYYY"')}${field('PlaceOfBirth', 'Place of Birth')}
+        ${select('CountryOfBirth', 'Country of Birth', ['MOROCCO', 'SPAIN'])}${select('Nationality', 'Current Nationality', ['MONACO', 'MOROCCO', 'SPAIN'])}
+      </fieldset>
+      <fieldset><legend>2. Passport Details</legend>
+        ${field('PassportNo', 'Passport Number')}${field('PassportIssueDate', 'Date of Issue', 'placeholder="DD/MM/YYYY"')}
+        ${field('PassportExpiryDate', 'Date of Expiry', 'placeholder="DD/MM/YYYY"')}${field('PassportIssuePlace', 'Place of Issue')}
+      </fieldset>
+      <fieldset><legend>3. Contact Details</legend>
+        ${field('Email', 'Email', 'type="email"')}${field('ConfirmEmail', 'Confirm Email', 'type="email"')}${field('Mobile', 'Mobile Number', 'type="tel"')}
+        ${field('Address', 'Home Address')}${field('PostalCode', 'Postal Code')}
+      </fieldset>
+      <fieldset><legend>4. Employment</legend>${field('Occupation', 'Occupation')}${field('Employer', 'Employer Name')}</fieldset>
+      <fieldset><legend>5. Travel</legend>${field('EntryDate', 'Intended date of entry', 'placeholder="DD/MM/YYYY"')}${field('ExitDate', 'Intended date of exit', 'placeholder="DD/MM/YYYY"')}</fieldset>
+      <fieldset><legend>6. Previous Visas</legend>${field('PrevVisa', 'Previous Schengen visa number')}</fieldset>
+      <fieldset><legend>7. Sponsor</legend>${field('SponsorName', 'Sponsor name')}</fieldset>
+      <fieldset><legend>8. Host</legend>${field('HostName', 'Host / hotel name')}</fieldset>
+      <fieldset><legend>9. Family</legend>${field('FatherName', "Father's name")}${field('MotherName', "Mother's name")}</fieldset>
+      <fieldset><legend>10. Minor</legend>${field('Guardian', 'Legal guardian')}</fieldset>
+      <fieldset><legend>11. Residence</legend>${field('ResidencePermit', 'Residence permit number')}</fieldset>
+      <fieldset><legend>12. Declaration</legend><label><input type="checkbox" id="Declare"> I declare the information is correct</label></fieldset>
+      <fieldset><legend>13. Account</legend>${field('Password', 'Password', 'type="password"')}${field('ConfirmPassword', 'Confirm Password', 'type="password"')}</fieldset>
+      <fieldset><legend>14. Verification</legend>${field('CaptchaCode', 'Enter the code shown', 'name="captcha" autocomplete="off"')}</fieldset>
+      <button type="submit" id="btnSubmit">Submit</button>
+    </form>`,
+    `<script>document.addEventListener('submit', e => { e.preventDefault(); window.__submitted = true; }, true);</script>`,
+    '<header><a href="#">Logout</a></header>');
+}
+
 const FIXTURES = {
   'bls-form': () => blsApplicantForm(),
+  'bls-member': () => blsMemberForm(),
   'bls-manage-incomplete': () => blsManage('Not Completed'),
   'bls-manage-complete': () => blsManage('Completed'),
   'bls-noslots': () => blsNoSlots(),
@@ -675,7 +714,10 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     await a.close();
     await new Promise(r => setTimeout(r, 700));
     s = await storage();
-    assert(s.settings.watchTabId == null && !s.settings.watching, JSON.stringify(s.settings));
+    // Either the background cleared the closed tab's id, or tab B (now visible, showing the
+    // appointment page) took the watch over first. Both are right; a stale id is not.
+    assert(s.settings.watchTabId !== idA, `stale id kept: ${JSON.stringify(s.settings)}`);
+    assert(s.settings.watchTabId == null ? !s.settings.watching : s.settings.watchTabId === idB, JSON.stringify(s.settings));
   });
 
   await check('readiness: "Not Completed" on Manage Appointments shows a persistent warning on every BLS page until the record is completed; the change is filed on the application', async () => {
@@ -712,6 +754,59 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     await dash.click('#rows tr');
     await dash.click('#dTabs [data-t="appt"]');
     await dash.waitForFunction(() => /Application form completed/.test(document.getElementById('apptCard').textContent));
+  });
+
+  // ---------- "Fill my details" ----------
+  const FORM_URL = 'https://www.blsspainmorocco.com/MAR/applicant/addmember';
+  const APPLICANT = { givenName: 'Yahya', surname: 'El Amrani', passport: 'XB1234567', birthDate: '1994-03-07', birthPlace: 'Rabat', sex: 'Male (M)', maritalStatus: 'Single',
+    nationality: 'Moroccan', email: 'yahya@example.com', phone: '+212612345678', passportExpiry: '2031-05-14' };   // no issue date / place on purpose
+  await check('fill my details: on the HUD click only, the BLS member form gets names, passport, dates, birth place, nationality, email, phone; password, verification and unrelated fields untouched; nothing submitted', async () => {
+    await fresh();
+    await sw.evaluate((m) => chrome.storage.local.set({
+      applications: [{ id: 'app-1', num: 1001, createdAt: Date.now(), status: 'idle', destinationId: 'spain', centre: 'Rabat', category: 'Tourism · Tourisme', applicant: m.a, history: [] }],
+      settings: { ...m.s, activeAppId: 'app-1' },
+    }), { a: APPLICANT, s: MANUAL });
+    const formPath = new URL(FORM_URL).pathname;
+    const f = await open(FORM_URL, 'bls-member');
+    await f.waitForSelector('#rdv-maroc-badge.rdv-can-fill .rdv-fill', { state: 'visible' });
+    await f.waitForTimeout(800);
+    assert((await f.inputValue('#Surname')) === '', 'nothing may be filled before the click');
+    await f.click('#rdv-maroc-badge .rdv-fill');
+    await f.waitForFunction(() => document.getElementById('Surname').value === 'El Amrani');
+    const v = await f.evaluate(() => {
+      const g = id => document.getElementById(id).value;
+      return { first: g('FirstName'), gender: g('Gender'), marital: g('MaritalStatus'), dob: g('DateOfBirth'), pob: g('PlaceOfBirth'), cob: g('CountryOfBirth'), nat: g('Nationality'),
+        pass: g('PassportNo'), iss: g('PassportIssueDate'), exp: g('PassportExpiryDate'), issPlace: g('PassportIssuePlace'), email: g('Email'), email2: g('ConfirmEmail'), mob: g('Mobile'),
+        addr: g('Address'), occ: g('Occupation'), entry: g('EntryDate'), father: g('FatherName'), pwd: g('Password'), pwd2: g('ConfirmPassword'), cap: g('CaptchaCode'),
+        submitted: !!window.__submitted, filled: [...document.querySelectorAll('.rdv-filled')].map(e => e.id), skipped: [...document.querySelectorAll('.rdv-skipped')].map(e => e.id) };
+    });
+    assert(v.first === 'Yahya' && v.gender === 'M' && v.marital === 'Single' && v.dob === '07/03/1994' && v.pob === 'Rabat' && v.nat === 'MOROCCO', JSON.stringify(v));
+    assert(v.pass === 'XB1234567' && v.exp === '14/05/2031' && v.email === 'yahya@example.com' && v.email2 === 'yahya@example.com' && v.mob === '+212612345678', JSON.stringify(v));
+    assert(v.iss === '' && v.issPlace === '' && v.cob === '' && v.addr === '' && v.occ === '' && v.entry === '' && v.father === '', 'a field we do not know was written: ' + JSON.stringify(v));
+    assert(v.pwd === '' && v.pwd2 === '' && v.cap === '', 'password or verification field touched');
+    assert(!v.submitted && hits[formPath] === 1, 'the form was submitted or the page navigated');
+    assert(v.filled.length === 12 && v.skipped.sort().join() === 'PassportIssueDate,PassportIssuePlace', JSON.stringify({ filled: v.filled, skipped: v.skipped }));
+    const toasts = await f.$$eval('#rdv-maroc-toasts .rdv-toast', els => els.map(e => e.textContent));
+    assert(toasts.some(t => /Filled 12 fields, skipped 2/.test(t) && /Nothing submitted/.test(t)), toasts.join(' | '));
+  });
+
+  await check('fill my details: with protection on, the HUD says locked and the dashboard button fills the portal form instead', async () => {
+    await fresh();
+    const dash = await openDashboard();
+    await createApp(dash);
+    await enableProtection(dash, 'horse-battery-7');
+    const f = await open(FORM_URL, 'bls-member');
+    await f.waitForSelector('#rdv-maroc-badge.rdv-can-fill .rdv-fill', { state: 'visible' });
+    await f.click('#rdv-maroc-badge .rdv-fill');
+    await f.waitForFunction(() => [...document.querySelectorAll('#rdv-maroc-toasts .rdv-toast')].some(t => /locked/.test(t.textContent)));
+    assert((await f.inputValue('#Surname')) === '', 'locked details must not be filled from the page');
+    await dash.bringToFront();
+    await dash.click('#rows tr');
+    await dash.waitForSelector('#drawer:not(.hidden) #fillBtn');
+    await dash.click('#fillBtn');
+    await f.waitForFunction(() => document.getElementById('Surname').value === 'El Amrani' && document.getElementById('PassportNo').value === 'XB1234567', null, { timeout: 8000 });
+    assert((await f.inputValue('#DateOfBirth')) === '07/03/1994', 'date not formatted for the portal');
+    assert(!(await f.evaluate(() => !!window.__submitted)), 'submitted');
   });
 
   // ---------- VFS flow (SPA calendar rendered after load) ----------

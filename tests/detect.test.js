@@ -178,6 +178,33 @@ test('detectReadiness: the Manage Appointments record status', () => {
   assert.equal(D.detectReadiness(''), null);
 });
 
+test('matchFormField: BLS / VFS applicant form labels map to saved details; credentials and verification never do', () => {
+  const cases = {
+    'Surname Surname (as in passport)': 'surname', 'FirstName First Name': 'givenName', 'Prénom': 'givenName', 'Nom': 'surname',
+    'Gender': 'sex', 'MaritalStatus Marital Status': 'maritalStatus', 'DateOfBirth Date of Birth DD/MM/YYYY': 'birthDate',
+    'PlaceOfBirth Place of Birth': 'birthPlace', 'Nationality Current Nationality': 'nationality',
+    'PassportNo Passport Number': 'passport', 'PassportIssueDate Date of Issue': 'passportIssue', 'PassportExpiryDate Date of Expiry': 'passportExpiry',
+    'PassportIssuePlace Place of Issue': 'passportIssuePlace', 'Email': 'email', 'ConfirmEmail Confirm Email': 'email', 'Mobile Mobile Number': 'phone',
+    'Password': null, 'ConfirmPassword Confirm Password': null, 'CaptchaCode Enter the code shown captcha': null, 'Verification': null,
+    'Occupation': null, "FatherName Father's name": null, 'EntryDate Intended date of entry': null, 'CountryOfBirth Country of Birth': null, '': null,
+  };
+  for (const [label, key] of Object.entries(cases)) assert.equal(D.matchFormField(label), key, label);
+});
+
+test('formatDate follows the field hint; matchOption finds the right option', () => {
+  assert.equal(D.formatDate('1994-03-07', D.dateFormatHint('DD/MM/YYYY')), '07/03/1994');
+  assert.equal(D.formatDate('1994-03-07', D.dateFormatHint('MM/DD/YYYY')), '03/07/1994');
+  assert.equal(D.formatDate('1994-03-07', D.dateFormatHint('yyyy-mm-dd')), '1994-03-07');
+  assert.equal(D.formatDate('1994-03-07', D.dateFormatHint('Date of Birth')), '07/03/1994');
+  assert.equal(D.formatDate('', 'dd/mm/yyyy'), '');
+  assert.equal(D.matchOption(['Select', 'Male', 'Female'], 'Male (M)'), 1);
+  assert.equal(D.matchOption(['Select', 'M', 'F'], 'Female (F)'), 2);
+  assert.equal(D.matchOption(['Select', 'MONACO', 'MOROCCO', 'SPAIN'], 'Moroccan'), 2);
+  assert.equal(D.matchOption(['Select', 'Single', 'Married'], 'married'), 2);
+  assert.equal(D.matchOption(['Select', 'Single', 'Married'], 'Widowed'), -1);
+  assert.equal(D.matchOption(['Select'], ''), -1);
+});
+
 test('hash is stable and changes with input', () => {
   assert.equal(D.hash('available|2026-11-12|3|0'), D.hash('available|2026-11-12|3|0'));
   assert.notEqual(D.hash('available|2026-11-12|3|0'), D.hash('available|2026-11-12|4|0'));

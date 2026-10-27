@@ -39,8 +39,10 @@ const STATE_ICON = { watching: 'radar', slot: 'calendar', paused: 'clock', booke
 
 const APPLICANT_FIELDS = [
   ['surname', 'Surname', 'user'], ['givenName', 'Given name', 'user'], ['passport', 'Passport number', 'id'],
-  ['passportExpiry', 'Passport expiry', 'calendar', 'date'], ['birthDate', 'Birth date', 'calendar', 'date'],
+  ['passportIssue', 'Passport issue date', 'calendar', 'date'], ['passportExpiry', 'Passport expiry', 'calendar', 'date'],
+  ['passportIssuePlace', 'Passport issued at', 'pin'], ['birthDate', 'Birth date', 'calendar', 'date'],
   ['birthPlace', 'Place of birth', 'pin'], ['sex', 'Sex', 'user', ['', 'Male (M)', 'Female (F)']],
+  ['maritalStatus', 'Marital status', 'user', ['', 'Single', 'Married', 'Divorced', 'Widowed']],
   ['nationality', 'Nationality', 'globe'], ['email', 'Email', 'mail', 'email'], ['phone', 'Phone', 'phone', 'tel'],
   ['address', 'Address', 'pin'],
 ];
@@ -420,13 +422,13 @@ function copyBtn(text) {
 function displayValue(key, val) {
   if (!val) return '';
   if (key === 'destinationId') return destName(val);
-  if (['passportExpiry', 'birthDate', 'travelFrom', 'travelTo'].includes(key)) return fmtDate(val);
+  if (['passportIssue', 'passportExpiry', 'birthDate', 'travelFrom', 'travelTo'].includes(key)) return fmtDate(val);
   if (key === 'category') return val.split(' ·')[0];
   return val;
 }
 /** What gets copied: the raw value portals expect (dates as DD/MM/YYYY). */
 function copyValue(key, val) {
-  if (['passportExpiry', 'birthDate', 'travelFrom', 'travelTo'].includes(key) && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
+  if (['passportIssue', 'passportExpiry', 'birthDate', 'travelFrom', 'travelTo'].includes(key) && /^\d{4}-\d{2}-\d{2}$/.test(val)) {
     const [y, m, d] = val.split('-'); return `${d}/${m}/${y}`;
   }
   return displayValue(key, val);
@@ -743,6 +745,32 @@ async function addFiles(files) {
   if (added) { toast(`${added} document${added > 1 ? 's' : ''} added`); renderDocs(a); }
 }
 
+/** "Fill the portal form": sends this application's details to the portal tab, which fills matching
+ *  fields on that click only (never submits). Works with protection on, since this page holds the key. */
+async function fillPortalForm() {
+  const a = appById(selectedId);
+  if (!a) return;
+  if (a._locked) { toast('Unlock first'); return; }
+  const { host_permissions = [] } = chrome.runtime.getManifest();
+  let tabs = [];
+  try { tabs = await chrome.tabs.query({ url: host_permissions }); } catch (e) {}
+  const tab = tabs.find(t => t.id === settings.watchTabId) || tabs.find(t => t.active) || tabs[tabs.length - 1];
+  if (!tab) { toast('Open the portal form in a tab first'); return; }
+  const msg = { type: 'fillForm', applicant: a.applicant || {} };
+  let r = null;
+  try { r = await chrome.tabs.sendMessage(tab.id, msg); } catch (e) {}
+  if (!r) {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['detect.js', 'content.js'] });
+      await chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: ['content.css'] });
+      r = await chrome.tabs.sendMessage(tab.id, msg);
+    } catch (e) {}
+  }
+  if (!r) { toast('Could not reach the portal tab'); return; }
+  toast(`Filled ${r.filled.length} field${r.filled.length === 1 ? '' : 's'}, skipped ${r.skipped.length} – nothing submitted`);
+  try { await chrome.windows.update(tab.windowId, { focused: true }); await chrome.tabs.update(tab.id, { active: true }); } catch (e) {}
+}
+
 // ---------- wiring ----------
 async function refresh() {
   const s = await load(['applications', 'settings', 'status', 'nextAt', 'lastHit']);
@@ -806,6 +834,7 @@ async function init() {
     renderDrawer();
   };
   $('activeBtn').onclick = async () => { await setActive(selectedId); render(); toast('Watcher linked to this application'); };
+  $('fillBtn').onclick = fillPortalForm;
   $('deleteApp').onclick = async () => {
     const a = appById(selectedId);
     if (!a || !confirm(`Delete ${fullName(a)} (#${a.num}) and its documents?`)) return;
