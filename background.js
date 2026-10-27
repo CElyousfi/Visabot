@@ -1,5 +1,45 @@
 /* background.js — service worker: desktop notifications, badge, tab bookkeeping. */
 'use strict';
+if (typeof importScripts === 'function' && typeof RDVRelease === 'undefined') importScripts('release.js');   // Chrome SW; Firefox loads it via background.scripts
+
+// ---------- release-time reminders (15 min, 1 min, and at the minute) ----------
+const REMINDER_OFFSETS = [[15, 'rdv-rel-15'], [1, 'rdv-rel-1'], [0, 'rdv-rel-0']];
+async function scheduleReleaseReminders() {
+  if (!chrome.alarms) return;
+  for (const [, name] of REMINDER_OFFSETS) await chrome.alarms.clear(name);
+  const { settings = {} } = await chrome.storage.local.get('settings');
+  if (settings.remind === false) { await chrome.storage.local.remove('nextRelease'); return; }
+  const n = RDVRelease.next(settings.destinationId, settings.centre, new Date());
+  if (!n || !n.at) { await chrome.storage.local.remove('nextRelease'); return; }
+  const at = n.at.getTime();
+  await chrome.storage.local.set({ nextRelease: { at, centre: settings.centre, dayName: n.dayName, time: n.time, line: n.line } });
+  for (const [min, name] of REMINDER_OFFSETS) {
+    const when = at - min * 60000;
+    if (when > Date.now()) await chrome.alarms.create(name, { when });
+  }
+}
+if (chrome.alarms) chrome.alarms.onAlarm.addListener(async (alarm) => {
+  const hit = REMINDER_OFFSETS.find(([, name]) => name === alarm.name);
+  if (!hit) return;
+  const { nextRelease: n, settings = {} } = await chrome.storage.local.get(['nextRelease', 'settings']);
+  if (!n) return;
+  const [min] = hit;
+  const where = `${n.centre} · ${n.dayName} ${n.time}`;
+  const title = min === 0 ? `RDV Maroc: slots release NOW – ${n.centre}` : `RDV Maroc: ${n.centre} release in ${min} min`;
+  const body = min === 0 ? 'Press Submit on Visa Type Selection, do the verification, read the result.' : min === 15
+    ? `${where}. Get in position: logged in, on Visa Type Selection, choices made.` : `${where}. Hands on the keyboard.`;
+  try { await chrome.notifications.create(`${alarm.name}-${Date.now()}`, { type: 'basic', iconUrl: 'icons/icon128.png', title, message: body, priority: 2, requireInteraction: min === 0 }); } catch (e) {}
+  if (min <= 1 && settings.sound !== false) await playSoundOffscreen();
+  badge(min === 0 ? 'GO' : `${min}m`, min === 0 ? '#dc2626' : '#f59e0b');
+  if (min === 0) setTimeout(scheduleReleaseReminders, 60000);   // roll over to the following release
+});
+chrome.runtime.onStartup.addListener(scheduleReleaseReminders);
+chrome.runtime.onInstalled.addListener(scheduleReleaseReminders);
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes.settings) return;
+  const a = changes.settings.oldValue || {}, b = changes.settings.newValue || {};
+  if (a.destinationId !== b.destinationId || a.centre !== b.centre || a.remind !== b.remind) scheduleReleaseReminders();
+});
 
 function badge(text, color) {
   chrome.action.setBadgeText({ text });
@@ -152,6 +192,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       return;
     }
     if (msg.type === 'setBadge') { badge(msg.text || '', msg.color); reply({ ok: true }); return; }
+    if (msg.type === 'scheduleReminders') { await scheduleReleaseReminders(); reply({ ok: true }); return; }
     if (msg.type === 'openDashboard') { chrome.runtime.openOptionsPage(); reply({ ok: true }); return; }
     if (msg.type === 'readiness') { await recordReadiness(msg.state, msg.url); reply({ ok: true }); return; }
     if (msg.type === 'tabAlive') { let alive = false; try { alive = !!(await chrome.tabs.get(msg.tabId)); } catch (e) {} reply({ alive }); return; }

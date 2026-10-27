@@ -336,6 +336,7 @@
         <span class="rdv-dot"></span>
         <svg class="rdv-ring" viewBox="0 0 36 36" aria-hidden="true"><circle class="rdv-ring-bg" cx="18" cy="18" r="15.5"/><circle class="rdv-ring-fg" cx="18" cy="18" r="15.5"/><text x="18" y="22.5" text-anchor="middle"></text></svg>
         <span class="rdv-text">RDV Maroc</span><span class="rdv-sub"></span>
+        <span class="rdv-release" title="Next slot release for your centre (consulate rules, Moroccan time)"></span>
         <button type="button" class="rdv-fill" data-act="fill" title="Fill this form from your saved details. Nothing is submitted.">Fill my details</button>
         <button type="button" class="rdv-more" title="Details">▾</button>
       </div>
@@ -364,6 +365,7 @@
   };
   function setBadge(state, text, sub) {
     const b = ensureBadge();
+    startReleaseTicker();
     b.dataset.state = state;
     b.classList.toggle('rdv-watching', !!(settings && settings.watching));
     b.querySelector('.rdv-text').textContent = text;
@@ -386,6 +388,30 @@
     else if (!timer) setTitle('● Watching');
     renderMeta();
   }
+  // ---------- release countdown (BLS centres with a published release time) ----------
+  const rel = { timer: null, warned: null };
+  function renderRelease() {
+    const b = $('#rdv-maroc-badge');
+    if (!b || !window.RDVRelease || !settings) return;
+    const el = b.querySelector('.rdv-release');
+    const n = RDVRelease.next(settings.destinationId, settings.centre, new Date());
+    if (!n || !n.at) { el.textContent = ''; el.className = 'rdv-release'; return; }
+    const ms = n.at.getTime() - Date.now();
+    const soon = ms > 0 && ms <= 15 * 60000, live = ms <= 0 && ms > -30 * 60000;
+    el.className = `rdv-release${soon ? ' rdv-soon' : ''}${live ? ' rdv-live' : ''}`;
+    el.textContent = live ? `RELEASE NOW · ${settings.centre}` : `${n.dayName.slice(0, 3)} ${n.time} · ${RDVRelease.countdown(ms)}`;
+    const key = `${n.at.getTime()}`;
+    if (soon && rel.warned !== key) {
+      rel.warned = key;
+      toast('warn', `${settings.centre} slots release in ${Math.ceil(ms / 60000)} min – get in position: logged in, on Visa Type Selection, choices made.`, { sticky: true });
+    }
+  }
+  function startReleaseTicker() {
+    if (rel.timer) return;
+    renderRelease();
+    rel.timer = setInterval(renderRelease, 1000);
+  }
+
   function renderMeta() {
     const b = $('#rdv-maroc-badge');
     if (!b || !hud.expanded) return;

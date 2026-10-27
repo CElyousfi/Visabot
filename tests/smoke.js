@@ -1279,6 +1279,47 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     assert(opts.some(o => /#1001 Yahya El Amrani · Spain ✓/.test(o)), opts.join(' | '));
   });
 
+  await check('release countdown: popup shows the next Casablanca release (Sunday 10:00), the other lines, the walk-in hint and the checklist', async () => {
+    await fresh(Object.assign({}, MANUAL, { destinationId: 'spain', destination: 'Spain', centre: 'Casablanca', category: 'Tourism' }));
+    const p = await openPopup();
+    await p.waitForFunction(() => !document.getElementById('releaseCard').classList.contains('hidden'));
+    const when = await p.textContent('#relWhen');
+    assert(/Casablanca · Sunday 10:00/.test(when), when);
+    const cd = await p.textContent('#relCountdown');
+    assert(/^(\d+d )?\d\d:\d\d:\d\d$/.test(cd.trim()), cd);
+    const cd2 = await (async () => { await p.waitForTimeout(1100); return p.textContent('#relCountdown'); })();
+    assert(cd2 !== cd, 'countdown must tick every second');
+    const walk = await p.textContent('#relWalkin');
+    assert(/walk-in Mon–Fri 9:00–12:00/.test(walk), walk);
+    const states = await p.$$eval('#checklist li', ls => ls.map(l => l.dataset.state));
+    assert(states.length === 4 && states.every(x => x === 'unknown'), states.join(','));
+    // Rabat shows three lines, soonest first, with the prior-visa and student lines named.
+    await p.selectOption('#centre', 'Rabat');
+    await p.waitForFunction(() => /Rabat/.test(document.getElementById('relWhen').textContent));
+    const lines = await p.$$eval('#relList li', ls => ls.map(l => l.textContent));
+    assert(lines.length === 2 && lines.join(' ').includes('Previous Schengen visa') || lines.join(' ').includes('students'), lines.join(' | '));
+    // A VFS centre has no published release: the card hides.
+    await p.selectOption('#destination', 'italy');
+    await p.waitForFunction(() => document.getElementById('releaseCard').classList.contains('hidden'));
+  });
+
+  await check('release countdown: the in-page HUD shows it on a BLS page and the background schedules the three reminders', async () => {
+    await fresh(Object.assign({}, MANUAL, { destinationId: 'spain', destination: 'Spain', centre: 'Casablanca', remind: true }));
+    await sw.evaluate(() => new Promise(res => chrome.runtime.sendMessage({ type: 'scheduleReminders' }, res)).catch(() => null));
+    await sw.evaluate(async () => { if (typeof scheduleReleaseReminders === 'function') await scheduleReleaseReminders(); });
+    const alarms = await sw.evaluate(async () => (await chrome.alarms.getAll()).map(a => a.name).sort());
+    assert(alarms.join(',') === 'rdv-rel-0,rdv-rel-1,rdv-rel-15', alarms.join(','));
+    const { nextRelease } = await sw.evaluate(() => chrome.storage.local.get('nextRelease'));
+    assert(nextRelease && nextRelease.centre === 'Casablanca' && nextRelease.time === '10:00' && nextRelease.at > Date.now(), JSON.stringify(nextRelease));
+    const pg = await open(BLS_URL, 'bls-noslots');
+    await pg.waitForFunction(() => { const e = document.querySelector('#rdv-maroc-badge .rdv-release'); return e && /Sun 10:00 · (\d+d )?\d\d:\d\d:\d\d/.test(e.textContent); }, null, { timeout: 10000 });
+    // Reminders off → alarms cleared.
+    await sw.evaluate(async () => { const { settings } = await chrome.storage.local.get('settings'); settings.remind = false; await chrome.storage.local.set({ settings }); });
+    await pg.waitForTimeout(500);
+    const after = await sw.evaluate(async () => (await chrome.alarms.getAll()).length);
+    assert(after === 0, `alarms left: ${after}`);
+  });
+
   await context.close();
   fs.rmSync(userDataDir, { recursive: true, force: true });
 

@@ -23,6 +23,18 @@
   </label>
 </section>
 
+<section id="releaseCard" class="card release hidden">
+  <div class="row"><span class="k">Next slot release</span><span id="relWhen" class="v"></span></div>
+  <div id="relCountdown" class="countdown">—</div>
+  <div id="relLine" class="muted"></div>
+  <ul id="relList" class="rel-list"></ul>
+  <div id="relWalkin" class="note soft hidden"></div>
+  <div class="k small">Be ready before the minute</div>
+  <ul id="checklist" class="checklist"></ul>
+  <label class="chk"><input id="remind" type="checkbox" checked> Remind me 15 min and 1 min before</label>
+  <div class="muted tiny">Times from the consulates' published rules (Moroccan time). Confirm on the consulate page; they change.</div>
+</section>
+
 <section class="card">
   <label>Destination
     <select id="destination"></select>
@@ -69,6 +81,7 @@
   You log in and pass any verification yourself. This tool never stores your password, never fills a CAPTCHA, never books. It only watches the page you opened and alerts you.
 </footer>
 <script src="data.js"></script>
+<script src="release.js"></script>
 <script src="popup.js"></script>
 </body>
 </html>

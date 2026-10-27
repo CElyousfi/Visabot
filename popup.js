@@ -65,7 +65,7 @@ function collectSettings(prev) {
   return Object.assign({}, prev, {
     destinationId: d.id, destination: d.name.split(' ·')[0], centre: $('centre').value, category: $('category').value,
     interval: Number($('interval').value), autoRefresh: $('autoRefresh').checked, sound: $('sound').checked,
-    pauseOnHit: $('pauseOnHit').checked, repeatMinutes: Math.max(1, Number($('repeatMinutes').value) || 10),
+    pauseOnHit: $('pauseOnHit').checked, remind: $('remind').checked, repeatMinutes: Math.max(1, Number($('repeatMinutes').value) || 10),
     autoStart: $('autoStart').checked,
   });
 }
@@ -100,8 +100,9 @@ function renderApps(applications, settings) {
 }
 
 async function renderStatus() {
-  const { settings = {}, status = {}, lastHit, nextAt, pageContext, applications = [] } = await load(['settings', 'status', 'lastHit', 'nextAt', 'pageContext', 'applications']);
+  const { settings = {}, status = {}, lastHit, nextAt, pageContext, applications = [], readiness } = await load(['settings', 'status', 'lastHit', 'nextAt', 'pageContext', 'applications', 'readiness']);
   const watching = !!settings.watching;
+  renderRelease(settings, { readiness, pageContext: pageContext && Object.assign({ hasApplicant: applications.length > 0 }, pageContext), status });
   renderAuto(settings, pageContext);
   renderApps(applications, settings);
   $('start').classList.toggle('hidden', watching);
@@ -127,6 +128,46 @@ async function renderStatus() {
     $('hitText').textContent = `${new Date(lastHit.at).toLocaleString()} · ${lastHit.where}` + (lastHit.dates && lastHit.dates.length ? ` · ${lastHit.dates.slice(0, 4).join(', ')}` : '');
   }
   $('selectorText').textContent = settings.selector ? `Watching area: ${settings.selector}` : 'Watching: whole page (pick the calendar for better accuracy)';
+}
+
+function renderRelease(settings, ctx) {
+  const card = $('releaseCard');
+  const R = window.RDVRelease;
+  const dest = settings.destinationId, centre = settings.centre;
+  const list = R.upcoming(dest, centre, new Date(), 3);
+  if (!list.length) { card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  const now = Date.now();
+  const nxt = list.find(x => x.at);
+  const cd = $('relCountdown');
+  if (nxt) {
+    const ms = nxt.at.getTime() - now;
+    $('relWhen').textContent = `${centre} · ${nxt.dayName} ${nxt.time}`;
+    cd.textContent = ms <= 0 ? 'NOW – go!' : R.countdown(ms);
+    cd.classList.toggle('soon', ms > 0 && ms <= 15 * 60000);
+    cd.classList.toggle('now', ms <= 0 && ms > -30 * 60000);
+    $('relLine').textContent = `${nxt.line} · ${nxt.at.toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`;
+  } else {
+    $('relWhen').textContent = `${centre}`;
+    cd.textContent = '—'; cd.className = 'countdown';
+    $('relLine').textContent = list[0].dayName ? `${list[0].dayName} – ${list[0].line}` : list[0].line;
+  }
+  const ul = $('relList'); ul.innerHTML = '';
+  for (const r of list.filter(x => x !== nxt)) {
+    const li = document.createElement('li');
+    li.innerHTML = `<span></span><b></b>`;
+    li.firstChild.textContent = r.line;
+    li.lastChild.textContent = r.at ? `${r.dayName} ${r.time} · ${R.relative(r.at.getTime() - now)}` : (r.dayName ? `${r.dayName}, time not published` : 'not published');
+    ul.appendChild(li);
+  }
+  const walk = R.WALK_INS.filter(w => w.dest === dest && w.centre.toLowerCase() === String(centre || '').toLowerCase());
+  $('relWalkin').classList.toggle('hidden', !walk.length);
+  if (walk.length) $('relWalkin').textContent = `No appointment needed (walk-in ${walk[0].hours}): ${walk[0].who}.`;
+  const cl = $('checklist'); cl.innerHTML = '';
+  for (const it of R.checklist(Object.assign({ now }, ctx))) {
+    const li = document.createElement('li'); li.dataset.state = it.state; li.textContent = it.label; cl.appendChild(li);
+  }
+  if (document.activeElement !== $('remind')) $('remind').checked = settings.remind !== false;
 }
 
 function fillChoices(settings) {
@@ -163,7 +204,7 @@ async function init() {
   $('destination').onchange = async () => { renderDestination({}); await persist({ auto: false }); };
   for (const id of ['centre', 'category']) $(id).onchange = () => persist({ auto: false });
   $('interval').oninput = () => { $('intervalVal').textContent = $('interval').value; };
-  for (const id of ['interval', 'autoRefresh', 'sound', 'pauseOnHit', 'repeatMinutes', 'autoStart']) $(id).onchange = () => persist();
+  for (const id of ['interval', 'autoRefresh', 'sound', 'pauseOnHit', 'repeatMinutes', 'autoStart', 'remind']) $(id).onchange = () => persist();
   $('autoBtn').onclick = async () => {
     const { settings: cur = {} } = await load('settings');
     if (cur.auto === false) {

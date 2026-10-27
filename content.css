@@ -125,3 +125,8 @@ html.rdv-picking, html.rdv-picking * { cursor: crosshair !important; }
 #rdv-maroc-badge .rdv-fill { display: none; border: 0; background: #34d399; color: #052e16; font-weight: 700; padding: 6px 10px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
 #rdv-maroc-badge.rdv-can-fill .rdv-fill { display: inline-block; }
 #rdv-maroc-badge .rdv-fill:hover { background: #6ee7b7; }
+
+#rdv-maroc-badge .rdv-release { font: 600 11px/1 ui-monospace, Menlo, Consolas, monospace; color: #a7f3d0; background: rgba(16,185,129,.18); padding: 4px 7px; border-radius: 6px; white-space: nowrap; }
+#rdv-maroc-badge .rdv-release:empty { display: none; }
+#rdv-maroc-badge .rdv-release.rdv-soon { color: #fde68a; background: rgba(245,158,11,.25); animation: rdv-pulse 1s infinite; }
+#rdv-maroc-badge .rdv-release.rdv-live { color: #fff; background: #dc2626; }

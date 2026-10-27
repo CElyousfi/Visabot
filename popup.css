@@ -55,3 +55,19 @@ option:not(.unsupported) { color: var(--text); }
 .auto[data-auto="on"] #autoText { color: var(--green); }
 .linkbtn { border: 0; background: transparent; color: var(--info); cursor: pointer; font-size: 11px; padding: 0; text-decoration: underline; }
 .chk.off { opacity: .5; }
+
+.release .countdown { font: 700 26px/1.1 ui-monospace, Menlo, Consolas, monospace; letter-spacing: .5px; margin: 4px 0 2px; color: #4f46e5; }
+.release .countdown.soon { color: #d97706; animation: rdv-blink 1s steps(2) infinite; }
+.release .countdown.now { color: #dc2626; }
+@keyframes rdv-blink { 50% { opacity: .55; } }
+.rel-list { list-style: none; margin: 6px 0 2px; padding: 0; font-size: 12px; }
+.rel-list li { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); padding: 2px 0; border-top: 1px solid var(--line); }
+.rel-list li b { color: var(--text); font-weight: 600; white-space: nowrap; }
+.note.soft { background: #1e293b; color: var(--muted); border: 1px dashed var(--line); }
+.k.small { font-size: 11px; margin-top: 8px; text-transform: uppercase; letter-spacing: .4px; }
+.checklist { list-style: none; margin: 4px 0; padding: 0; font-size: 12px; }
+.checklist li { display: flex; gap: 8px; align-items: flex-start; padding: 3px 0; }
+.checklist li::before { content: '?'; flex: none; width: 16px; height: 16px; border-radius: 50%; font-size: 11px; line-height: 16px; text-align: center; background: var(--line); color: var(--muted); }
+.checklist li[data-state="ok"]::before { content: '✓'; background: #16a34a; color: #fff; }
+.checklist li[data-state="todo"]::before { content: '!'; background: #f59e0b; color: #1c1917; }
+.muted.tiny { font-size: 10px; margin-top: 6px; }

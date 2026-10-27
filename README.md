@@ -126,6 +126,25 @@ Nothing leaves your browser: there is no server.
 - A page that takes long to load is not classified as "no slots" or "logged out" until its content is
   there (up to 45 s); the panel says "page loading…" meanwhile. If you get a false alert, tell me what the page showed and I will tune the rules.
 
+## Release-time countdown (BLS Spain)
+
+BLS Spain in Morocco does not drop slots at random: each centre releases them at a fixed, published
+time (consulate rules). The popup, the in-page HUD and the dashboard show a live countdown to the next
+release for your centre, the other lines (previous-visa holders, students), the walk-in hint where one
+exists, and a "be ready before the minute" checklist (form completed, logged in, in position, details
+saved). With **Remind me** on, you get a notification 15 min and 1 min before, and at the minute.
+
+| Centre | Release (Moroccan time) |
+|---|---|
+| Casablanca | Sunday 10:00 |
+| Rabat | Saturday 13:00 · previous Schengen visa (last 4 years): Wednesday 16:00 · some students: Tuesday 17:00 |
+| Tétouan, Nador | Saturday 10:00 |
+| Tanger | Monday, time not published |
+| Agadir | not published |
+
+The schedule lives in `release.js`. Confirm it on the consulate's own page before relying on it; rules
+change, and the extension never acts at the release minute on your behalf.
+
 ## Development
 ```
 npm install                        # playwright, for the browser test only

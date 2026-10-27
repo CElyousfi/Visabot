@@ -13,7 +13,8 @@
     "notifications",
     "scripting",
     "tabs",
-    "offscreen"
+    "offscreen",
+    "alarms"
   ],
   "host_permissions": [
     "https://*.blsspainmorocco.com/*",
@@ -27,6 +28,7 @@
   "background": {
     "service_worker": "background.js",
     "scripts": [
+      "release.js",
       "background.js"
     ]
   },
@@ -48,6 +50,7 @@
       ],
       "js": [
         "detect.js",
+        "release.js",
         "content.js"
       ],
       "css": [

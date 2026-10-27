@@ -317,6 +317,11 @@ function renderLive() {
   const s = status.state;
   let state = 'idle', text = 'Watcher idle';
   const where = [settings.destination, settings.centre].filter(Boolean).join(' · ');
+  const rel = window.RDVRelease && RDVRelease.next(settings.destinationId, settings.centre, new Date());
+  if (rel && rel.at) {
+    const ms = rel.at.getTime() - Date.now();
+    text = ms <= 0 && ms > -30 * 60000 ? `RELEASE NOW · ${settings.centre}` : `Next release · ${settings.centre} ${rel.dayName.slice(0, 3)} ${rel.time} · ${RDVRelease.countdown(ms)}`;
+  }
   if (s === 'booked') { state = 'booked'; text = 'Booked ✓'; }
   else if (settings.watching) {
     if (s === 'available') { state = 'available'; text = `Slot available · ${where}`; }
