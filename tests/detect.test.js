@@ -142,6 +142,20 @@ test('detectBooking reads a BLS / VFS confirmation page', () => {
   assert.deepEqual([fr.booked, fr.date, fr.time], [true, '2027-01-05', '08:05']);
 });
 
+test('detectBooking reads a BLS-style details table (tab-separated, no colons) and takes the appointment date, not the birth date', () => {
+  const b = D.detectBooking('Appointment Confirmation\nYour Appointment has been booked successfully.\nAppointment ID\tBLS/CAS/0112/00987\nApplicant Name\tYAHYA EL AMRANI\nDate of Birth\t07/03/1994\nAppointment Date\t03/12/2026\nAppointment Time\t10:15 - 10:30\nVisa Application Centre\tCasablanca\nVisa Type\tSchengen Visa - Tourism');
+  assert.deepEqual([b.booked, b.date, b.time, b.reference, b.centre], [true, '2026-12-03', '10:15', 'BLS/CAS/0112/00987', 'Casablanca']);
+  // No "Appointment Date" row: the nearest future date on the page, not the birth date.
+  const c = D.detectBooking('Booking confirmed\nDate of Birth: 07/03/1994\nPassport expiry: 14/05/2031\nYour slot: 03/12/2026 at 10:15\nRef: ABC123456');
+  assert.deepEqual([c.date, c.time, c.reference], ['2026-12-03', '10:15', 'ABC123456']);
+});
+
+test('detectBooking: a weak heading counts only with both a date and a reference', () => {
+  assert.equal(D.detectBooking('Appointment Details\nAppointment Date\t03/12/2026\nAppointment ID\tBLS/CAS/0112/00987').booked, true);
+  assert.equal(D.detectBooking('Appointment Details\nAppointment Date\t03/12/2026').booked, false);
+  assert.equal(D.detectBooking('Appointment Details\nAppointment ID\tBLS/CAS/0112/00987').booked, false);
+});
+
 test('detectBooking ignores pages that only mention confirmation', () => {
   assert.equal(D.detectBooking('Download your appointment confirmation after booking.').booked, false);
   assert.equal(D.detectBooking('Select a date. Earliest available 12/11/2026').booked, false);

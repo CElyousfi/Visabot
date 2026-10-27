@@ -347,21 +347,43 @@
    * so a help page that merely mentions "appointment confirmation" does not count.
    * @returns {{booked:boolean, date?:string, time?:string, reference?:string, reasons?:string[]}}
    */
+  // Headings that only count when the page also shows a date AND a reference.
+  const WEAK_BOOKED_PHRASES = ['appointment confirmation', 'appointment details', 'appointment id', 'appointment reference', 'booking reference', 'confirmation number'];
+  /** "Label: value", "Label<tab>value" (table cells in innerText) or "Label - value" lines. */
+  function labelValuePairs(text) {
+    const pairs = [];
+    for (const raw of (text || '').split(/\n+/)) {
+      const line = raw.trim();
+      if (!line || line.length > 160) continue;
+      const m = /^([^\t:]{2,40}?)\s*(?::|\t+|\s[-–]\s)\s*(.{1,80})$/.exec(line);
+      if (m) pairs.push({ label: norm(m[1]), value: m[2].trim() });
+    }
+    return pairs;
+  }
   function detectBooking(text) {
     const t = norm(text);
-    const hits = BOOKED_PHRASES.filter(p => t.includes(p));
-    if (!hits.length) return { booked: false };
-    const ref = (text || '').match(REF_RE);
-    const dates = extractDates(text);
-    if (!ref && !dates.length) return { booked: false };
-    const time = (text || '').match(TIME_RE);
-    return {
-      booked: true,
-      date: dates[0] || '',
-      time: time ? `${time[1].padStart(2, '0')}:${time[2]}` : '',
-      reference: ref ? ref[1] : '',
-      reasons: hits,
-    };
+    const strong = BOOKED_PHRASES.filter(p => t.includes(p));
+    const weak = WEAK_BOOKED_PHRASES.filter(p => t.includes(p));
+    if (!strong.length && !weak.length) return { booked: false };
+    const pairs = labelValuePairs(text);
+    const pick = (labelRe, valueRe) => { const p = pairs.find(x => labelRe.test(x.label) && (!valueRe || valueRe.test(x.value))); return p ? p.value : ''; };
+    const refVal = pick(/(appointment|booking|confirmation|reference|r[ée]f[ée]rence|r[ée]servation|cita|rdv)\b.*(\bno\b|number|num[ée]ro|n[°º]|\bid\b|code|\bref)|^(reference|r[ée]f[ée]rence|ref)\b/, /^[A-Z0-9][A-Z0-9\-\/]{4,}$/i);
+    const global = (text || '').match(REF_RE);
+    const reference = refVal || (global ? global[1] : '');
+    // The appointment date: from its own row first; otherwise the nearest future date on the page
+    // (a confirmation also shows the birth date and passport dates).
+    const dateRow = pick(/(appointment|booking|rendez|rdv|cita|slot).*date|date.*(appointment|rendez|rdv|cita)|^date$/, /\d/);
+    let date = extractDates(dateRow)[0] || '';
+    if (!date) {
+      const all = extractDates(text), today = new Date().toISOString().slice(0, 10);
+      const future = all.filter(d => d >= today);
+      date = future[0] || all[all.length - 1] || '';
+    }
+    const timeRow = pick(/time|slot|hour|heure|hora/, TIME_RE);
+    const time = (timeRow || text || '').match(TIME_RE);
+    const centre = pick(/cent(re|er)|location|\bvac\b|office|jurisdiction|\blieu\b/, /^[A-Za-zÀ-ÿ' .-]{3,40}$/);
+    if (strong.length ? !(reference || date) : !(reference && date)) return { booked: false };
+    return { booked: true, date, time: time ? `${time[1].padStart(2, '0')}:${time[2]}` : '', reference, centre, reasons: strong.concat(weak) };
   }
 
   const api = { classify, extractDates, hash, norm, reloadDelaySeconds, detectContext, detectBooking, hasAppointmentVocabulary, isFormDateField, isManualCheckHost, detectReadiness, matchFormField, dateFormatHint, formatDate, matchOption, MIN_INTERVAL, NO_SLOT_PHRASES, SLOT_PHRASES, CAPTCHA_MARKERS, LOGIN_MARKERS };

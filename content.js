@@ -241,7 +241,9 @@
     stopTimer();
     highlightSlots(document.body, false);
     if (settings && settings.watching) await patchSettings({ watching: false, manualStopUrl: location.href });
-    await send({ type: 'booked', booking: Object.assign({}, b, ctx, { url: location.href, at: Date.now() }), tabId: myTabId });
+    // What the confirmation says wins; the page's selected options fill the gaps (centre, category…).
+    const parsed = Object.fromEntries(Object.entries(b).filter(([, v]) => v));
+    await send({ type: 'booked', booking: Object.assign({}, ctx, parsed, { url: location.href, at: Date.now() }), tabId: myTabId });
     setBadge('booked', 'Booked ✓', summary);
     banner('✅ Appointment booked', `${[b.date, b.time].filter(Boolean).join(' at ')}${b.reference ? `\nReference: ${b.reference}` : ''}\nSaved in the RDV Maroc dashboard. Watching stopped.`);
     await publishStatus({ state: 'booked', reasons: b.reasons, dates: b.date ? [b.date] : [] });
@@ -619,6 +621,26 @@
     } catch (e) { /* autoplay may be blocked until the user interacts with the page */ }
   }
 
+  // ---------- slow pages: "no slots" / "logged out" only once the content is there ----------
+  const NAV_AT = Date.now();
+  const SETTLE_MAX_MS = 45000;
+  const LOADER_SEL = '.loader, .spinner, .loading, [aria-busy="true"], .k-loading-mask, .blockUI, .blockOverlay, .preloader, [class*="loading" i], [class*="spinner" i]';
+  function pageSettled() {
+    if (document.readyState !== 'complete') return false;
+    for (const el of document.querySelectorAll(LOADER_SEL)) {
+      if (el.closest('[id^="rdv-maroc"]')) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width > 10 && r.height > 10 && getComputedStyle(el).visibility !== 'hidden') return false;
+    }
+    return (document.body.innerText || '').trim().length >= 150 || !!document.querySelector('main, form, table, [role="main"]');
+  }
+  let settleTimer = null;
+  /** A 'none' or 'login' verdict on a page that is still loading would be wrong; wait (max 45 s). */
+  function stillLoading(state) {
+    if (state !== 'none' && state !== 'login') return false;
+    return !pageSettled() && Date.now() - NAV_AT < SETTLE_MAX_MS;
+  }
+
   // ---------- the check ----------
   async function publishStatus(extra) {
     await store({ status: Object.assign({
@@ -635,6 +657,13 @@
     if (res.state !== 'login') { loginSince = 0; clearTimeout(loginTimer); }
     hud.checks++; hud.lastCheckAt = Date.now();
     if (!hud.app) linkedApplication();
+
+    if (stillLoading(res.state)) {
+      setBadge('unknown', 'Watching', 'page loading…');
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => evaluate('settle'), 1000);
+      return;
+    }
 
     if (res.state === 'captcha') {
       stopTimer();
@@ -866,6 +895,12 @@
     if (settings.manualStopUrl && settings.manualStopUrl === location.href) { idle('unknown', 'RDV Maroc', 'stopped – press Start to watch again'); return false; }
     const snap = snapshot();
     const res = D.classify(snap);
+    if (stillLoading(res.state)) {
+      idle('unknown', 'RDV Maroc', 'page loading…');
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => tryAutoStart(opts), 1000);
+      return false;
+    }
     if (res.state === 'captcha') { idle('captcha', 'Needs you', 'solve the verification; I resume after'); return false; }
     if (res.state === 'login') { idle('login', 'Logged out', 'log in and open the calendar; I resume after'); return false; }
     // Only pages about appointments start by themselves; a form page with date pickers does not.

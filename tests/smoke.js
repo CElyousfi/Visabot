@@ -160,8 +160,33 @@ function blsMemberForm() {
     '<header><a href="#">Logout</a></header>');
 }
 
+/** A BLS-style confirmation: a details table with no colons (innerText separates cells with tabs). */
+function blsConfirmedTable() {
+  return page('Appointment Confirmation', `
+    <h2>Appointment Confirmation</h2>
+    <p>Your Appointment has been booked successfully. Please carry this confirmation and your passport.</p>
+    <table class="table"><tbody>
+      <tr><th>Appointment ID</th><td>BLS/CAS/0112/00987</td></tr>
+      <tr><th>Applicant Name</th><td>YAHYA EL AMRANI</td></tr>
+      <tr><th>Appointment Date</th><td>03/12/2026</td></tr>
+      <tr><th>Appointment Time</th><td>10:15 - 10:30</td></tr>
+      <tr><th>Visa Application Centre</th><td>Casablanca</td></tr>
+      <tr><th>Visa Type</th><td>Schengen Visa - Tourism</td></tr>
+    </tbody></table>
+    <button type="button">Print</button>`, '', '<header><a href="#">Logout</a></header>');
+}
+/** A portal page that takes ~3 s to show its content: a spinner and a bare header first. */
+function slowPage() {
+  const content = `<main><h2>Book New Appointment -</h2><div class="alert alert-danger">Currently, no slots are available for the selected category. Kindly try again after sometime. Thank you for your patience</div><button type="button" onclick="location.reload()">Try Again</button></main>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Book New Appointment -</title></head>
+<body><header><a href="#">Login</a> | <a href="#">Register</a></header><div class="loading" style="width:48px;height:48px;border:4px solid #ccc;border-top-color:#333;border-radius:50%"></div>
+<script>setTimeout(() => { document.querySelector('.loading').remove(); document.querySelector('header').innerHTML = '<a href="#">Logout</a>'; document.body.insertAdjacentHTML('beforeend', ${JSON.stringify(content)}); }, 3000);</script></body></html>`;
+}
+
 const FIXTURES = {
   'bls-form': () => blsApplicantForm(),
+  'bls-confirmed-table': () => blsConfirmedTable(),
+  'slow-noslots': () => slowPage(),
   'bls-member': () => blsMemberForm(),
   'bls-manage-incomplete': () => blsManage('Not Completed'),
   'bls-manage-complete': () => blsManage('Completed'),
@@ -807,6 +832,51 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     await f.waitForFunction(() => document.getElementById('Surname').value === 'El Amrani' && document.getElementById('PassportNo').value === 'XB1234567', null, { timeout: 8000 });
     assert((await f.inputValue('#DateOfBirth')) === '07/03/1994', 'date not formatted for the portal');
     assert(!(await f.evaluate(() => !!window.__submitted)), 'submitted');
+  });
+
+  await check('booking capture: a BLS-style confirmation table (no colons) files date, time, centre and reference and stops watching', async () => {
+    await fresh();
+    const dash = await openDashboard();
+    const appId = await createApp(dash);
+    await closeDrawer(dash);
+    const bls = await open(BLS_URL, 'bls-noslots');
+    await startWatching(BLS_URL);
+    await waitBadge(bls, 'none');
+    const CONF2 = 'https://www.blsspainmorocco.com/MAR/appointment/appointmentconfirmation';
+    const conf = await open(CONF2, 'bls-confirmed-table');
+    await waitBadge(conf, 'booked', 10000);
+    let a;
+    const end = Date.now() + 5000;
+    do { a = (await storage()).applications.find(x => x.id === appId); if (a && a.status === 'booked') break; await conf.waitForTimeout(100); } while (Date.now() < end);
+    assert(a && a.status === 'booked', 'not booked');
+    assert(a.appointment.date === '2026-12-03' && a.appointment.time === '10:15' && a.appointment.reference === 'BLS/CAS/0112/00987' && a.appointment.centre === 'Casablanca', JSON.stringify(a.appointment));
+    const s = await storage();
+    assert(!s.settings.watching, 'still watching after the booking');
+    await dash.bringToFront();
+    await dash.waitForFunction(() => document.getElementById('sBooked').textContent === '1');
+  });
+
+  await check('slow portal: a page that shows a spinner for 3 s never produces "logged out" or "no slots" before its content is there', async () => {
+    await fresh({ ...MANUAL, watching: true, watchTabId: null });
+    const blsPath = new URL(BLS_URL).pathname;
+    scenario[blsPath] = 'slow-noslots';
+    const p = await context.newPage();
+    opened.push(p);
+    const seen = [];
+    const t0 = Date.now();
+    await p.goto(BLS_URL);
+    while (Date.now() - t0 < 4200) {
+      const st = (await storage()).status;
+      const hasContent = await p.evaluate(() => !!document.querySelector('main'));
+      seen.push({ t: Date.now() - t0, state: st && st.state, hasContent, badge: (await badgeState(p)) && (await badgeState(p)).text });
+      await p.waitForTimeout(250);
+    }
+    const early = seen.filter(x => !x.hasContent);
+    assert(early.length >= 6, 'the fixture showed its content too early for the check to mean anything');
+    assert(early.every(x => x.state !== 'login' && x.state !== 'none'), 'classified before the content was there: ' + JSON.stringify(early.filter(x => x.state === 'login' || x.state === 'none')));
+    assert(early.some(x => /loading/.test(x.badge || '')), 'HUD should say the page is loading: ' + JSON.stringify(early.slice(-3)));
+    await waitBadge(p, 'none', 8000);
+    assert((await storage()).status.state === 'none', 'no slots not recognised once the content arrived');
   });
 
   // ---------- VFS flow (SPA calendar rendered after load) ----------
