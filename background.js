@@ -8,9 +8,16 @@ async function scheduleReleaseReminders() {
   if (!chrome.alarms) return;
   for (const [, name] of REMINDER_OFFSETS) await chrome.alarms.clear(name);
   const { settings = {} } = await chrome.storage.local.get('settings');
-  if (settings.remind === false) { await chrome.storage.local.remove('nextRelease'); return; }
-  const n = RDVRelease.next(settings.destinationId, settings.centre, new Date());
+  if (settings.remind === false) { await chrome.alarms.clear('rdv-rel-verify'); await chrome.storage.local.remove('nextRelease'); return; }
+  const { releaseVerification = {} } = await chrome.storage.local.get('releaseVerification');
+  const eff = RDVRelease.effectiveRules(settings.destinationId, settings.centre, releaseVerification[settings.centre]);
+  const n = eff.rules.length ? RDVRelease.upcomingFromRules(eff.rules, new Date(), 5).find(x => x.at) : null;
   if (!n || !n.at) { await chrome.storage.local.remove('nextRelease'); return; }
+  // Re-verify reminder: 24 h before the release, if the page hasn't been read in the last 5 days.
+  await chrome.alarms.clear('rdv-rel-verify');
+  const v = releaseVerification[settings.centre];
+  const pageUrl = RDVRelease.centrePageUrl(settings.destinationId, settings.centre);
+  if (pageUrl && (!v || Date.now() - v.at > 5 * 86400000) && n.at.getTime() - 86400000 > Date.now()) await chrome.alarms.create('rdv-rel-verify', { when: n.at.getTime() - 86400000 });
   const at = n.at.getTime();
   await chrome.storage.local.set({ nextRelease: { at, centre: settings.centre, dayName: n.dayName, time: n.time, line: n.line } });
   for (const [min, name] of REMINDER_OFFSETS) {
@@ -19,6 +26,13 @@ async function scheduleReleaseReminders() {
   }
 }
 if (chrome.alarms) chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === 'rdv-rel-verify') {
+    const { settings = {} } = await chrome.storage.local.get('settings');
+    const url = RDVRelease.centrePageUrl(settings.destinationId, settings.centre);
+    try { await chrome.notifications.create(`rdv-verify-${Date.now()}`, { type: 'basic', iconUrl: 'icons/icon128.png', title: `RDV Maroc: re-check ${settings.centre}'s release time`, message: 'Release is tomorrow. Open the BLS centre page once; the extension reads the current time from it.', priority: 1 }); } catch (e) {}
+    if (url) await chrome.storage.local.set({ verifyUrl: url });
+    return;
+  }
   const hit = REMINDER_OFFSETS.find(([, name]) => name === alarm.name);
   if (!hit) return;
   const { nextRelease: n, settings = {} } = await chrome.storage.local.get(['nextRelease', 'settings']);
@@ -39,6 +53,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !changes.settings) return;
   const a = changes.settings.oldValue || {}, b = changes.settings.newValue || {};
   if (a.destinationId !== b.destinationId || a.centre !== b.centre || a.remind !== b.remind) scheduleReleaseReminders();
+});
+chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.releaseVerification) scheduleReleaseReminders(); });
+chrome.notifications.onClicked.addListener(async (id) => {
+  if (!id.startsWith('rdv-verify-')) return;
+  const { verifyUrl } = await chrome.storage.local.get('verifyUrl');
+  if (verifyUrl) chrome.tabs.create({ url: verifyUrl });
 });
 
 function badge(text, color) {

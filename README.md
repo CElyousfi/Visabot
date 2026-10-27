@@ -143,8 +143,12 @@ saved). With **Remind me** on, you get a notification 15 min and 1 min before, a
 | Tanger | Monday, time not published | BLS centre page |
 | Agadir | not published | – |
 
-The schedule lives in `release.js`, read from blsspainmorocco.com on 27 Oct 2026. Re-check the centre page
-before release day; rules change, and the extension never acts at the release minute on your behalf.
+The built-in schedule lives in `release.js`, read from blsspainmorocco.com on 27 Oct 2026. **It verifies
+itself:** whenever you open your centre's public BLS page (popup → "Open centre page"), the extension reads
+the release sentence from that page and the countdown follows what the page says today, with a note showing
+when it was last read and any difference from the built-in schedule. A reminder asks you to open the page
+the day before a release if it hasn't been read in 5 days. The extension never acts at the release minute
+on your behalf.
 
 ## Development
 ```

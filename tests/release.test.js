@@ -74,3 +74,46 @@ test('checklist reads readiness and the last portal page', () => {
   const login = R.checklist({ readiness: null, pageContext: { url: 'https://www.blsspainmorocco.net/MAR/account/login', at: now }, status: { state: 'login' }, now });
   assert.deepEqual(login.map(i => i.state), ['unknown', 'todo', 'todo', 'unknown']);
 });
+
+test('parseReleaseText reads the exact sentences on BLS centre pages, in EN / ES / FR', () => {
+  const cases = [
+    ['appointments for Schengen and national visas for Casablanca will be available on our website every Sunday at 10 am.', [[0, '10:00']]],
+    ['Appointments for the Rabat Centre will be released. EVERY SATURDAY, AT 01:00 PM Until the weekly quota is exhausted.', [[6, '13:00']]],
+    ['Appointments open every Wednesday at 4:00 PM via the Rabat booking page.', [[3, '16:00']]],
+    ['Appointments for this category open every Tuesday at 5:00 p.m.', [[2, '17:00']]],
+    ['Appointments are released on the website: Every Saturday at 10:00 AM until the weekly quota is exhausted.', [[6, '10:00']]],
+    ['Appointments will be opened weekly every Monday on the BLS website.', [[1, null]]],
+    ['las citas para NADOR estarán disponibles todos los sábados a las 10 a. m', [[6, '10:00']]],
+    ['Les rendez-vous seront disponibles tous les dimanches à 10h sur notre site.', [[0, '10:00']]],
+    ['Our office is open Monday to Friday from 8 am to 1 pm. Walk-ins Monday to Thursday 09:00 to 12:00.', []],
+  ];
+  for (const [text, want] of cases) assert.deepEqual(R.parseReleaseText(text).map(o => [o.day, o.time]), want, text);
+});
+
+test('effectiveRules follows a fresh page reading and reports differences', () => {
+  const now = Date.now();
+  const fresh = { at: now - 3600000, url: 'https://blsspainmorocco.com/casablanca/', found: [{ day: 0, time: '11:00', sentence: 'x' }] };
+  const e = R.effectiveRules('spain', 'Casablanca', fresh, now);
+  assert.equal(e.source, 'live');
+  assert.equal(e.rules[0].time, '11:00');
+  assert.deepEqual(e.diffs.map(d => d.kind), ['time-changed']);
+  const same = R.effectiveRules('spain', 'Casablanca', { at: now, found: [{ day: 0, time: '10:00' }] }, now);
+  assert.equal(same.diffs.length, 0);
+  const stale = R.effectiveRules('spain', 'Casablanca', { at: now - 20 * 86400000, found: [{ day: 0, time: '11:00' }] }, now);
+  assert.equal(stale.source, 'built-in'); assert.equal(stale.rules[0].time, '10:00');
+  const none = R.effectiveRules('spain', 'Casablanca', null, now);
+  assert.equal(none.source, 'built-in'); assert.equal(none.fresh, false);
+  // Rabat: the page shows two of the three lines → the third is reported missing, countdown uses the page's two
+  const rabat = R.effectiveRules('spain', 'Rabat', { at: now, found: [{ day: 6, time: '13:00' }, { day: 3, time: '16:00' }] }, now);
+  assert.equal(rabat.rules.length, 2);
+  assert.deepEqual(rabat.diffs.map(d => [d.kind, d.rule.day]), [['missing-on-page', 2]]);
+});
+
+test('centre page URL and path mapping', () => {
+  assert.equal(R.centrePageUrl('spain', 'Tanger'), 'https://blsspainmorocco.com/tangier/');
+  assert.equal(R.centrePageUrl('spain', 'Tétouan'), 'https://blsspainmorocco.com/tetouan/');
+  assert.equal(R.centrePageUrl('italy', 'Rabat'), null);
+  assert.equal(R.centreFromPath('blsspainmorocco.com', '/tangier/'), 'Tanger');
+  assert.equal(R.centreFromPath('www.blsspainmorocco.com', '/rabat/french/'), 'Rabat');
+  assert.equal(R.centreFromPath('www.blsspainmorocco.net', '/MAR/appointment/newappointment'), null);
+});

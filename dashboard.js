@@ -32,6 +32,8 @@ const save = obj => new Promise(r => chrome.storage.local.set(obj, r));
 
 // ---------- state ----------
 let apps = [], settings = {}, status = {}, nextAt = 0, lastHit = null;
+chrome.storage.local.get('releaseVerification').then(r => { window.__relVerif = r.releaseVerification || {}; });
+chrome.storage.onChanged.addListener((c, a) => { if (a === 'local' && c.releaseVerification) window.__relVerif = c.releaseVerification.newValue || {}; });
 let filter = 'all', query = '', selectedId = null, tab = 'detail', editing = false, zoom = 1, viewingDoc = null, manualOpen = false;
 
 const STATE_LABEL = { watching: 'Watching', slot: 'Slot available', paused: 'Paused', booked: 'Booked', idle: 'Not watching' };
@@ -317,7 +319,8 @@ function renderLive() {
   const s = status.state;
   let state = 'idle', text = 'Watcher idle';
   const where = [settings.destination, settings.centre].filter(Boolean).join(' · ');
-  const rel = window.RDVRelease && RDVRelease.next(settings.destinationId, settings.centre, new Date());
+  const relEff = window.RDVRelease && RDVRelease.effectiveRules(settings.destinationId, settings.centre, (window.__relVerif || {})[settings.centre]);
+  const rel = relEff && relEff.rules.length ? RDVRelease.upcomingFromRules(relEff.rules, new Date(), 5).find(x => x.at) : null;
   if (rel && rel.at) {
     const ms = rel.at.getTime() - Date.now();
     text = ms <= 0 && ms > -30 * 60000 ? `RELEASE NOW · ${settings.centre}` : `Next release · ${settings.centre} ${rel.dayName.slice(0, 3)} ${rel.time} · ${RDVRelease.countdown(ms)}`;

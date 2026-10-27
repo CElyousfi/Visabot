@@ -68,10 +68,10 @@
    * Upcoming releases for a centre, soonest first, each { at: Date, rule, dayName, time, line }.
    * Rules without a published time are returned once with at = null, after the scheduled ones.
    */
-  function upcoming(dest, centre, now = new Date(), count = 3) {
+  function upcoming(dest, centre, now = new Date(), count = 3, rules = null) {
     const out = [];
     const p = partsIn(now);
-    for (const rule of rulesFor(dest, centre)) {
+    for (const rule of (rules || rulesFor(dest, centre))) {
       if (rule.day == null || !rule.time) { out.push({ at: null, rule, dayName: rule.day == null ? null : DAYS[rule.day], time: null, line: rule.line, verified: rule.verified }); continue; }
       const [hh, mm] = rule.time.split(':').map(Number);
       for (let add = 0; add < 8; add++) {
@@ -128,7 +128,101 @@
     return items;
   }
 
-  const api = { TZ, DAYS, RELEASES, WALK_INS, rulesFor, upcoming, next, countdown, relative, checklist, zoned, partsIn };
+  // ---------- live verification: read the release line from BLS's own centre page ----------
+  const DAY_WORDS = {
+    0: ['sunday', 'sundays', 'dimanche', 'dimanches', 'domingo', 'domingos', 'الأحد'],
+    1: ['monday', 'mondays', 'lundi', 'lundis', 'lunes', 'الاثنين', 'الإثنين'],
+    2: ['tuesday', 'tuesdays', 'mardi', 'mardis', 'martes', 'الثلاثاء'],
+    3: ['wednesday', 'wednesdays', 'mercredi', 'mercredis', 'miércoles', 'miercoles', 'الأربعاء'],
+    4: ['thursday', 'thursdays', 'jeudi', 'jeudis', 'jueves', 'الخميس'],
+    5: ['friday', 'fridays', 'vendredi', 'vendredis', 'viernes', 'الجمعة'],
+    6: ['saturday', 'saturdays', 'samedi', 'samedis', 'sábado', 'sabado', 'sábados', 'sabados', 'السبت'],
+  };
+  const RELEASE_WORDS = /\b(appointments?|slots?|rendez-vous|rdv|cr[ée]neaux?|citas?)\b[^.\n]{0,120}?\b(available|open(?:ed|s|ing)?|released?|disponibles?|ouverts?|ouvertes?|lib[ée]r[ée]s?|estar[áa]n|disponibles)\b/i;
+  const TIME_RE = /\b(\d{1,2})(?::|h|\.)?(\d{2})?\s*(a\.?\s?m\.?|p\.?\s?m\.?|h\b)?/i;
+
+  function parseTime(str) {
+    const m = TIME_RE.exec(str);
+    if (!m) return null;
+    let hh = +m[1]; const mm = m[2] ? +m[2] : 0; const ap = (m[3] || '').replace(/[\s.]/g, '').toLowerCase();
+    if (hh > 23 || mm > 59) return null;
+    if (ap === 'pm' && hh < 12) hh += 12;
+    if (ap === 'am' && hh === 12) hh = 0;
+    if (!ap && !m[2] && !/h/i.test(m[0])) return null;      // a bare number is not a time
+    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  }
+
+  /**
+   * Find "appointments … every Sunday at 10 am"-style statements in a page's text.
+   * Returns [{ day, time, sentence }], time null when the sentence names a day but no time.
+   */
+  function parseReleaseText(text) {
+    const out = [];
+    const cleaned = (text || '').replace(/\b([ap])\.\s?m\.?/gi, '$1m').replace(/\s+/g, ' ');   // "a. m" / "p.m." → am / pm before splitting
+    const sentences = cleaned.split(/(?<=[.!?])\s+/);
+    for (let i = 0; i < sentences.length; i++) {
+      const sent = sentences[i];
+      // the keyword can sit in the previous sentence ("Appointments … will be released. EVERY SATURDAY, AT 01:00 PM")
+      if (!RELEASE_WORDS.test(sent) && !(i > 0 && RELEASE_WORDS.test(sentences[i - 1]) && sentences[i - 1].length < 200)) continue;
+      const low = sent.toLowerCase();
+      let day = null;
+      for (const [d, words] of Object.entries(DAY_WORDS)) if (words.some(w => new RegExp(`(^|[^a-z\u0600-\u06FF])${w}([^a-z\u0600-\u06FF]|$)`, 'i').test(low))) { day = +d; break; }
+      if (day == null) continue;
+      // the time is the first clock-like token after "at"/"à"/"a las"/", at" following the day word
+      const afterDay = low.slice(low.search(new RegExp(DAY_WORDS[day].join('|'))));
+      const atM = /\b(at|à|a las|a la|,)\s*([0-9][^,;]*)/i.exec(afterDay);
+      const time = atM ? parseTime(atM[2]) : parseTime(afterDay.replace(/\b\d{4}\b/g, ''));
+      if (!out.some(o => o.day === day && o.time === time)) out.push({ day, time, sentence: sent.trim().slice(0, 240) });
+    }
+    return out;
+  }
+
+  const FRESH_MS = 14 * 86400000;
+  /**
+   * Rules to count down from: the live page's lines when a fresh verification exists for this centre,
+   * else the built-in schedule. Also reports how each built-in rule compares with the page.
+   * verification: { at, url, found: [{day,time,sentence}] } as stored by the content script.
+   */
+  function effectiveRules(dest, centre, verification, now = Date.now()) {
+    const builtIn = rulesFor(dest, centre);
+    const v = verification && verification.found && verification.found.length && now - verification.at < FRESH_MS ? verification : null;
+    if (!v) return { rules: builtIn, source: 'built-in', verification: verification || null, fresh: false, diffs: [] };
+    const live = v.found.filter(f => f.time).map(f => {
+      const same = builtIn.find(r => r.day === f.day);
+      return { dest, centre, day: f.day, time: f.time, line: same ? same.line : 'Read from the BLS page', verified: 'live', sentence: f.sentence };
+    });
+    const diffs = [];
+    for (const r of builtIn) {
+      if (r.day == null || !r.time) continue;
+      const onPage = v.found.find(f => f.day === r.day);
+      if (!onPage) diffs.push({ rule: r, kind: 'missing-on-page' });
+      else if (onPage.time && onPage.time !== r.time) diffs.push({ rule: r, kind: 'time-changed', pageTime: onPage.time });
+    }
+    for (const f of v.found) if (f.time && !builtIn.some(r => r.day === f.day)) diffs.push({ found: f, kind: 'new-on-page' });
+    const rules = live.length ? live : builtIn;
+    return { rules, source: live.length ? 'live' : 'built-in', verification: v, fresh: true, diffs };
+  }
+
+  function upcomingFromRules(rules, now = new Date(), count = 3) {
+    return rules.length ? upcoming(rules[0].dest, rules[0].centre, now, count, rules) : [];
+  }
+
+  /** Centre info-page URL on blsspainmorocco.com for a centre name, or null. */
+  function centrePageUrl(dest, centre) {
+    if (dest !== 'spain') return null;
+    const slug = { casablanca: 'casablanca', rabat: 'rabat', tanger: 'tangier', tangier: 'tangier', tetouan: 'tetouan', nador: 'nador', agadir: 'agadir' }[norm(centre)];
+    return slug ? `https://blsspainmorocco.com/${slug}/` : null;
+  }
+  /** Centre name from a blsspainmorocco.com info-page path, or null. */
+  function centreFromPath(hostname, pathname) {
+    if (!/blsspainmorocco\.com$/i.test(hostname)) return null;
+    const m = /^\/(casablanca|rabat|tangier|tetouan|nador|agadir)\/?/i.exec(pathname || '');
+    if (!m) return null;
+    return { casablanca: 'Casablanca', rabat: 'Rabat', tangier: 'Tanger', tetouan: 'Tétouan', nador: 'Nador', agadir: 'Agadir' }[m[1].toLowerCase()];
+  }
+
+  const api = { TZ, DAYS, RELEASES, WALK_INS, FRESH_MS, rulesFor, upcoming, next, countdown, relative, checklist, zoned, partsIn,
+    parseReleaseText, parseTime, effectiveRules, upcomingFromRules, centrePageUrl, centreFromPath };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RDVRelease = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

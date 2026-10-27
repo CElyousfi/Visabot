@@ -100,9 +100,9 @@ function renderApps(applications, settings) {
 }
 
 async function renderStatus() {
-  const { settings = {}, status = {}, lastHit, nextAt, pageContext, applications = [], readiness } = await load(['settings', 'status', 'lastHit', 'nextAt', 'pageContext', 'applications', 'readiness']);
+  const { settings = {}, status = {}, lastHit, nextAt, pageContext, applications = [], readiness, releaseVerification = {} } = await load(['settings', 'status', 'lastHit', 'nextAt', 'pageContext', 'applications', 'readiness', 'releaseVerification']);
   const watching = !!settings.watching;
-  renderRelease(settings, { readiness, pageContext: pageContext && Object.assign({ hasApplicant: applications.length > 0 }, pageContext), status });
+  renderRelease(settings, { readiness, pageContext: pageContext && Object.assign({ hasApplicant: applications.length > 0 }, pageContext), status, releaseVerification });
   renderAuto(settings, pageContext);
   renderApps(applications, settings);
   $('start').classList.toggle('hidden', watching);
@@ -134,10 +134,28 @@ function renderRelease(settings, ctx) {
   const card = $('releaseCard');
   const R = window.RDVRelease;
   const dest = settings.destinationId, centre = settings.centre;
-  const list = R.upcoming(dest, centre, new Date(), 3);
+  const eff = R.effectiveRules(dest, centre, ctx.releaseVerification && ctx.releaseVerification[centre]);
+  const list = eff.rules.length ? R.upcomingFromRules(eff.rules, new Date(), 3) : [];
   if (!list.length) { card.classList.add('hidden'); return; }
   card.classList.remove('hidden');
   const now = Date.now();
+  // verification line
+  const v = eff.verification, pageUrl = R.centrePageUrl(dest, centre);
+  const vEl = $('relVerify');
+  vEl.classList.toggle('hidden', !pageUrl);
+  if (pageUrl) {
+    const ageDays = v ? Math.floor((now - v.at) / 86400000) : null;
+    const state = !v ? 'none' : eff.fresh && eff.source === 'live' ? 'live' : v.found && v.found.length ? 'stale' : 'none';
+    vEl.dataset.state = state;
+    $('relVerifyText').textContent = state === 'live' ? `✓ Read from the BLS ${centre} page ${ageDays === 0 ? 'today' : `${ageDays} day${ageDays === 1 ? '' : 's'} ago`} – countdown follows the page`
+      : state === 'stale' ? `⚠ Last read from the BLS page ${ageDays} days ago – open it again to re-check`
+      : v ? `⚠ The BLS ${centre} page gave no release time when last opened – using the built-in schedule`
+      : `Not yet verified against the BLS ${centre} page – open it once; I read the release time from it`;
+    $('relVerifyBtn').onclick = () => chrome.tabs.create({ url: pageUrl });
+  }
+  const dEl = $('relDiffs');
+  dEl.classList.toggle('hidden', !eff.diffs.length);
+  if (eff.diffs.length) dEl.textContent = 'The BLS page differs from the built-in schedule: ' + eff.diffs.map(d => d.kind === 'time-changed' ? `${R.DAYS[d.rule.day]} is now ${d.pageTime} (was ${d.rule.time})` : d.kind === 'missing-on-page' ? `${R.DAYS[d.rule.day]} ${d.rule.time} no longer on the page` : `new: ${R.DAYS[d.found.day]} ${d.found.time}`).join('; ') + '. The countdown uses the page.';
   const nxt = list.find(x => x.at);
   const cd = $('relCountdown');
   if (nxt) {
@@ -146,7 +164,7 @@ function renderRelease(settings, ctx) {
     cd.textContent = ms <= 0 ? 'NOW – go!' : R.countdown(ms);
     cd.classList.toggle('soon', ms > 0 && ms <= 15 * 60000);
     cd.classList.toggle('now', ms <= 0 && ms > -30 * 60000);
-    const tag = nxt.verified === 'bls' ? '✓ confirmed on the BLS centre page' : nxt.verified === 'secondary' ? '⚠ not confirmed on the BLS page' : '';
+    const tag = nxt.verified === 'live' ? '✓ from the live BLS page' : nxt.verified === 'bls' ? '✓ on the BLS centre page (27 Oct 2026)' : nxt.verified === 'secondary' ? '⚠ not confirmed on the BLS page' : '';
     $('relLine').textContent = `${nxt.line} · ${nxt.at.toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}${tag ? ` · ${tag}` : ''}`;
   } else {
     $('relWhen').textContent = `${centre}`;

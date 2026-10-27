@@ -236,7 +236,7 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
 
   const scenario = {};                       // url path → fixture key
   const hits = {};                           // url path → request count
-  await context.route(/^https:\/\/(www\.blsspainmorocco\.com|visa\.vfsglobal\.com)\//, async route => {
+  await context.route(/^https:\/\/((www\.)?blsspainmorocco\.com|visa\.vfsglobal\.com)\//, async route => {
     const u = new URL(route.request().url());
     if (route.request().resourceType() !== 'document') return route.fulfill({ status: 204, body: '' });
     hits[u.pathname] = (hits[u.pathname] || 0) + 1;
@@ -244,7 +244,7 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     await route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: key ? FIXTURES[key]() : '<h1>404</h1>' });
   });
   // Anything else stays offline.
-  await context.route(/^https?:\/\/(?!www\.blsspainmorocco\.com|visa\.vfsglobal\.com)/, r => r.abort());
+  await context.route(/^https?:\/\/(?!(www\.)?blsspainmorocco\.com|visa\.vfsglobal\.com)/, r => r.abort());
 
   let sw = context.serviceWorkers()[0];
   if (!sw) sw = await context.waitForEvent('serviceworker');
@@ -1308,7 +1308,7 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     await sw.evaluate(() => new Promise(res => chrome.runtime.sendMessage({ type: 'scheduleReminders' }, res)).catch(() => null));
     await sw.evaluate(async () => { if (typeof scheduleReleaseReminders === 'function') await scheduleReleaseReminders(); });
     const alarms = await sw.evaluate(async () => (await chrome.alarms.getAll()).map(a => a.name).sort());
-    assert(alarms.join(',') === 'rdv-rel-0,rdv-rel-1,rdv-rel-15', alarms.join(','));
+    assert(alarms.join(',') === 'rdv-rel-0,rdv-rel-1,rdv-rel-15,rdv-rel-verify', alarms.join(','));   // no page reading yet → a 'verify' reminder is scheduled too
     const { nextRelease } = await sw.evaluate(() => chrome.storage.local.get('nextRelease'));
     assert(nextRelease && nextRelease.centre === 'Casablanca' && nextRelease.time === '10:00' && nextRelease.at > Date.now(), JSON.stringify(nextRelease));
     const pg = await open(BLS_URL, 'bls-noslots');

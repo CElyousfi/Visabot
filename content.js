@@ -389,12 +389,15 @@
     renderMeta();
   }
   // ---------- release countdown (BLS centres with a published release time) ----------
-  const rel = { timer: null, warned: null };
+  const rel = { timer: null, warned: null, verif: null };
+  load('releaseVerification').then(r => { rel.verif = r.releaseVerification || {}; });
+  chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.releaseVerification) rel.verif = changes.releaseVerification.newValue || {}; });
   function renderRelease() {
     const b = $('#rdv-maroc-badge');
     if (!b || !window.RDVRelease || !settings) return;
     const el = b.querySelector('.rdv-release');
-    const n = RDVRelease.next(settings.destinationId, settings.centre, new Date());
+    const eff = RDVRelease.effectiveRules(settings.destinationId, settings.centre, rel.verif && rel.verif[settings.centre]);
+    const n = eff.rules.length ? RDVRelease.upcomingFromRules(eff.rules, new Date(), 5).find(x => x.at) : null;
     if (!n || !n.at) { el.textContent = ''; el.className = 'rdv-release'; return; }
     const ms = n.at.getTime() - Date.now();
     const soon = ms > 0 && ms <= 15 * 60000, live = ms <= 0 && ms > -30 * 60000;
@@ -946,8 +949,23 @@
     return true;
   }
 
+  /** On blsspainmorocco.com/<centre>/ (the public info page), read the release line and store it. */
+  async function verifyReleaseFromPage() {
+    if (!window.RDVRelease) return;
+    const centre = RDVRelease.centreFromPath(location.hostname, location.pathname);
+    if (!centre) return;
+    const text = (document.body && document.body.innerText) || '';
+    const found = RDVRelease.parseReleaseText(text);
+    const { releaseVerification = {} } = await load('releaseVerification');
+    releaseVerification[centre] = { at: Date.now(), url: location.href, found };
+    await store({ releaseVerification });
+    const line = found.filter(f => f.time).map(f => `${RDVRelease.DAYS[f.day]} ${f.time}`).join(', ');
+    toast(found.length ? 'ok' : 'warn', found.length ? `${centre}: release time read from this page – ${line || 'day only'}. The countdown now follows it.` : `${centre}: no release time found on this page; the countdown keeps the built-in schedule.`, { ms: 7000 });
+  }
+
   async function start() {
     settings = await readSettings();
+    await verifyReleaseFromPage();
     await checkReadiness();
     renderReadiness();
     ensureBadge();
