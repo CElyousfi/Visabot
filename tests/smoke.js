@@ -113,8 +113,19 @@ function blsCaptcha() {
   return page('Captcha Verification', `<h2>Captcha Verification</h2><p>Select all boxes with number 211</p><div class="captcha-grid">${cells}</div><button type="button">Submit</button>`, '', '<header><a href="#">Logout</a></header>');
 }
 
+/** BLS "Manage Appointments": the applicant record and its status. */
+function blsManage(status) {
+  return page('Manage Appointments', `
+    <h2>Manage Appointments</h2>
+    <table class="table"><thead><tr><th>Applicant</th><th>Passport</th><th>Application Status</th><th>Action</th></tr></thead>
+    <tbody><tr><td>YAHYA EL AMRANI</td><td>XB1234567</td><td class="status">${status}</td><td><a href="#">${status === 'Completed' ? 'View' : 'Edit'}</a></td></tr></tbody></table>`,
+    '', '<header><a href="#">Logout</a></header>');
+}
+
 const FIXTURES = {
   'bls-form': () => blsApplicantForm(),
+  'bls-manage-incomplete': () => blsManage('Not Completed'),
+  'bls-manage-complete': () => blsManage('Completed'),
   'bls-noslots': () => blsNoSlots(),
   'bls-captcha': () => blsCaptcha(),
   'bls-none': () => blsCalendar([]),
@@ -665,6 +676,42 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
     await new Promise(r => setTimeout(r, 700));
     s = await storage();
     assert(s.settings.watchTabId == null && !s.settings.watching, JSON.stringify(s.settings));
+  });
+
+  await check('readiness: "Not Completed" on Manage Appointments shows a persistent warning on every BLS page until the record is completed; the change is filed on the application', async () => {
+    await fresh();
+    await sw.evaluate((m) => chrome.storage.local.set({
+      applications: [{ id: 'app-1', num: 1001, createdAt: Date.now(), status: 'watching', destinationId: 'spain', centre: 'Rabat', category: 'Tourism · Tourisme', applicant: { givenName: 'Yahya', surname: 'El Amrani' }, history: [] }],
+      settings: { ...m, activeAppId: 'app-1' },
+    }), MANUAL);
+    const MANAGE_URL = 'https://www.blsspainmorocco.com/MAR/appointment/manageappointment';
+    const m = await open(MANAGE_URL, 'bls-manage-incomplete');
+    await m.waitForSelector('#rdv-maroc-warn');
+    const warn = await m.textContent('#rdv-maroc-warn');
+    assert(/Complete the application form first/.test(warn) && /BLS will not book/.test(warn), warn);
+    assert((await m.getAttribute('#rdv-maroc-warn a', 'href')) === MANAGE_URL, 'warning link should point at Manage Appointments');
+    let s;
+    const end = Date.now() + 5000;
+    do { s = await storage(); if (s.applications[0].formCompleted === false) break; await m.waitForTimeout(100); } while (Date.now() < end);
+    assert(s.readiness && s.readiness.state === 'incomplete' && s.readiness.url === MANAGE_URL, JSON.stringify(s.readiness));
+    assert(s.applications[0].formCompleted === false && s.applications[0].history[0].type === 'form', JSON.stringify(s.applications[0].history[0]));
+    // The warning follows you to the slot page, with the link back.
+    const n = await open(BLS_URL, 'bls-noslots');
+    await n.waitForSelector('#rdv-maroc-warn');
+    assert((await n.getAttribute('#rdv-maroc-warn a', 'href')) === MANAGE_URL, 'link from another page');
+    // The form gets completed: the warning goes away everywhere, the application records it.
+    scenario[new URL(MANAGE_URL).pathname] = 'bls-manage-complete';
+    await m.reload();
+    await m.waitForFunction(() => !document.getElementById('rdv-maroc-warn'));
+    await n.waitForFunction(() => !document.getElementById('rdv-maroc-warn'), null, { timeout: 5000 });
+    const end2 = Date.now() + 5000;
+    do { s = await storage(); if (s.applications[0].formCompleted === true) break; await m.waitForTimeout(100); } while (Date.now() < end2);
+    assert(s.readiness.state === 'complete' && s.applications[0].formCompleted === true, JSON.stringify(s.readiness));
+    assert(s.applications[0].history.some(e => /form completed/i.test(e.text)), 'form completed not in history');
+    const dash = await openDashboard();
+    await dash.click('#rows tr');
+    await dash.click('#dTabs [data-t="appt"]');
+    await dash.waitForFunction(() => /Application form completed/.test(document.getElementById('apptCard').textContent));
   });
 
   // ---------- VFS flow (SPA calendar rendered after load) ----------

@@ -79,6 +79,19 @@ async function recordBooking(b, tabId) {
   return app;
 }
 
+/** BLS applicant record status seen on Manage Appointments: filed on the linked application when it changes. */
+async function recordReadiness(state, url) {
+  const { applications, settings } = await getApps();
+  const app = targetApp(applications, settings, settings, false);
+  if (!app) return;
+  const complete = state === 'complete';
+  if (app.formCompleted === complete) return;
+  app.formCompleted = complete;
+  app.formUrl = url || app.formUrl || '';
+  logEvent(app, 'form', complete ? 'Application form completed ✓' : 'Application form not completed – BLS will not book without it', { url: url || '' });
+  await chrome.storage.local.set({ applications });
+}
+
 // Log pauses and resumes on the active application so its history tells the whole story.
 let lastLoggedState = null;
 async function logStatusChange(state) {
@@ -140,6 +153,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     }
     if (msg.type === 'setBadge') { badge(msg.text || '', msg.color); reply({ ok: true }); return; }
     if (msg.type === 'openDashboard') { chrome.runtime.openOptionsPage(); reply({ ok: true }); return; }
+    if (msg.type === 'readiness') { await recordReadiness(msg.state, msg.url); reply({ ok: true }); return; }
     if (msg.type === 'tabAlive') { let alive = false; try { alive = !!(await chrome.tabs.get(msg.tabId)); } catch (e) {} reply({ alive }); return; }
     reply({ ok: false });
   })();

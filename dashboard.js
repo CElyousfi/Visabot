@@ -595,6 +595,12 @@ function renderAppt(a) {
     actions.append(manualToggle);
     card.append(actions, manualForm);
   }
+  if (a.formCompleted != null) {
+    const line = h('div', { class: `readiness ${a.formCompleted ? 'ok' : 'warn'}` }, icon(a.formCompleted ? 'check' : 'edit'),
+      a.formCompleted ? 'Application form completed' : 'Application form not completed – BLS will not book without it',
+      !a.formCompleted && a.formUrl ? h('a', { href: a.formUrl, target: '_blank', rel: 'noopener' }, 'Open Manage Appointments') : null);
+    card.insertBefore(line, card.querySelector('.appt-actions'));
+  }
   $('apptCard').replaceChildren(card);
 
   const done = a.checklist || {};

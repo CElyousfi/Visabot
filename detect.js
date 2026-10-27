@@ -246,6 +246,17 @@
   // refresh by itself there: it reads whatever page the user is on. VFS keeps the auto-refresh.
   function isManualCheckHost(hostname) { return /bls(spain|portugal|international)/i.test(hostname || ''); }
 
+  // ---------- is the applicant record ready? ----------
+  // BLS: under Manage Appointments the applicant record says "Not Completed" until the application
+  // form is filled, and BLS refuses to book before that.
+  function detectReadiness(text) {
+    const t = norm(text);
+    if (!/manage appointment|my appointment|applicant|application/.test(t)) return null;
+    if (/\bnot completed\b|\bincomplete\b/.test(t)) return 'incomplete';
+    if (/\bcompleted\b/.test(t)) return 'complete';
+    return null;
+  }
+
   // ---------- which calendars are the appointment calendar ----------
   // Application forms have date pickers too (birth date, passport dates, travel dates). A picker
   // bound to one of those fields is not the appointment calendar, however many days it offers.
@@ -296,7 +307,7 @@
     };
   }
 
-  const api = { classify, extractDates, hash, norm, reloadDelaySeconds, detectContext, detectBooking, hasAppointmentVocabulary, isFormDateField, isManualCheckHost, MIN_INTERVAL, NO_SLOT_PHRASES, SLOT_PHRASES, CAPTCHA_MARKERS, LOGIN_MARKERS };
+  const api = { classify, extractDates, hash, norm, reloadDelaySeconds, detectContext, detectBooking, hasAppointmentVocabulary, isFormDateField, isManualCheckHost, detectReadiness, MIN_INTERVAL, NO_SLOT_PHRASES, SLOT_PHRASES, CAPTCHA_MARKERS, LOGIN_MARKERS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RDVDetect = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

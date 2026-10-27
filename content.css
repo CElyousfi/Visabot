@@ -109,3 +109,12 @@ html.rdv-picking, html.rdv-picking * { cursor: crosshair !important; }
 /* "Show me the day": a short, unmistakable flash on that one cell. */
 .rdv-flash { animation: rdv-flash-cell .4s ease-in-out 6 !important; outline: 4px solid #facc15 !important; outline-offset: 3px; }
 @keyframes rdv-flash-cell { 0%,100% { background: inherit; } 50% { background: #fde047 !important; } }
+
+/* ---------- readiness warning: the application form must be completed before BLS books ---------- */
+#rdv-maroc-warn {
+  position: fixed; left: 16px; bottom: 16px; z-index: 2147483646; display: flex; gap: 10px; align-items: center;
+  max-width: min(460px, 70vw); padding: 10px 14px; border-radius: 12px; background: #7c2d12; color: #ffedd5;
+  font: 13px/1.35 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; box-shadow: 0 8px 24px rgba(0,0,0,.3); border: 1px solid #fb923c;
+}
+#rdv-maroc-warn .rdv-w-ic { width: 24px; height: 24px; border-radius: 50%; background: #fb923c; color: #431407; font-weight: 800; display: grid; place-items: center; flex: none; }
+#rdv-maroc-warn a { color: #fed7aa; font-weight: 600; }

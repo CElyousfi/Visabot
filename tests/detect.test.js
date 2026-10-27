@@ -171,6 +171,13 @@ test('isManualCheckHost: BLS hosts have no auto-refresh, VFS hosts keep it', () 
   for (const h of ['visa.vfsglobal.com', 'www.vfsglobal.ma', 'example.com', '']) assert.equal(D.isManualCheckHost(h), false, h);
 });
 
+test('detectReadiness: the Manage Appointments record status', () => {
+  assert.equal(D.detectReadiness('Manage Appointments\nApplicant\tPassport\tStatus\nYAHYA EL AMRANI\tXB1234567\tNot Completed\tEdit'), 'incomplete');
+  assert.equal(D.detectReadiness('Manage Appointments\nApplicant\tPassport\tStatus\nYAHYA EL AMRANI\tXB1234567\tCompleted\tView'), 'complete');
+  assert.equal(D.detectReadiness('Book New Appointment\nCurrently, no slots are available'), null);
+  assert.equal(D.detectReadiness(''), null);
+});
+
 test('hash is stable and changes with input', () => {
   assert.equal(D.hash('available|2026-11-12|3|0'), D.hash('available|2026-11-12|3|0'));
   assert.notEqual(D.hash('available|2026-11-12|3|0'), D.hash('available|2026-11-12|4|0'));

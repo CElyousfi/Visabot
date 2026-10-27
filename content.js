@@ -248,6 +248,30 @@
     return true;
   }
 
+  // ---------- is the application form done? (BLS refuses to book before it is) ----------
+  async function checkReadiness() {
+    const state = D.detectReadiness((document.body.innerText || '').slice(0, 30000));
+    if (!state) return;
+    const { readiness } = await load('readiness');
+    if (readiness && readiness.state === state && readiness.url === location.href) return;
+    await store({ readiness: { state, url: location.href, at: Date.now() } });
+    send({ type: 'readiness', state, url: location.href });
+  }
+  /** Persistent warning on every BLS page while the record says "Not Completed". */
+  async function renderReadiness() {
+    const { readiness } = await load('readiness');
+    const el = $('#rdv-maroc-warn');
+    if (!MANUAL_CHECK || !readiness || readiness.state !== 'incomplete') { if (el) el.remove(); return; }
+    if (el) return;
+    const w = document.createElement('div');
+    w.id = 'rdv-maroc-warn';
+    w.innerHTML = `<span class="rdv-w-ic">!</span><div><b>Complete the application form first</b> – BLS will not book without it. <a target="_self"></a></div>`;
+    const a = w.querySelector('a');
+    a.href = readiness.url; a.textContent = readiness.url === location.href ? 'This is the page.' : 'Open Manage Appointments';
+    document.documentElement.appendChild(w);
+  }
+  chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes.readiness) renderReadiness(); });
+
   // ---------- highlight what to click (we never click it ourselves) ----------
   function highlightSlots(area, on, scroll) {
     const want = new Set();
@@ -675,6 +699,7 @@
     observer = new MutationObserver(() => {
       clearTimeout(t);
       t = setTimeout(async () => {
+        checkReadiness();
         if (await checkBooking()) return;
         if (settings && settings.watching) evaluate('mutation'); else tryAutoStart();
       }, MUTATION_DEBOUNCE_MS);
@@ -791,6 +816,8 @@
 
   async function start() {
     settings = await readSettings();
+    await checkReadiness();
+    renderReadiness();
     if (await checkBooking()) { startObserver(); return; }
     if (watchedElsewhere()) {
       // The tab you are looking at wins: if it shows the appointment page, or the other tab is
